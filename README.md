@@ -1,6 +1,6 @@
-## Rabit QPS Exchange
+# Rabit QPS Exchange
 
-### Creates and maintains a rabbit exchange which when published to enforces a QPS across queues
+## Creates and maintains a rabbit exchange which when published to enforces a QPS across queues
 
 Creates and maintains a rabbit exchange, 'qps_exchange', which when published to enforces a QPS across queues using parameters provided via rabbit message headers.
 Publish your messages to 'qps_exchange' instead of the default exchange supplying a 'qps-key' header and a 'qps-delay' header.
@@ -21,3 +21,16 @@ options:
 
 * --management Rabbit management connection string. Example http://guest:guest@localhost:15672/ (REQUIRED)
 * --connection Rabbit connection string. See https://www.rabbitmq.com/uri-spec.html (REQUIRED)
+
+### Installing
+* The rabbit server version must be > 3.5.0
+* The rabbit server must have the management plugin installed (it's http interface is used)
+* Install a modern version of node (async support is required)
+* Run `npm install`
+
+### Testing
+* Run a rabbitmq server
+* The rabbit server must have the management plugin installed
+* Run tests with `npm test`
+* The environment variables `rabbitConnString` and `managementConnString` can be used to provide connection information
+
