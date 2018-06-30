@@ -6,7 +6,7 @@ const Lock = require('semaphore-async-await').Lock
 
 function showHelp(){
     console.error(`
-Creates a rabbit exchange, 'qps_exchange', which when published to enforces a QPS across queues using parameters provided via rabbit message headers.
+Creates and maintains a rabbit exchange, 'qps_exchange', which when published to enforces a QPS across queues using parameters provided via rabbit message headers.
 Publish your messages to 'qps_exchange' instead of the default exchange supplying a 'qps-key' header and a 'qps-delay' header.
 The 'qps-key' is used to serialize all messages sent to the 'qps_exchange' regardless of their routing key which will be preserved
 The 'qps-delay' header (in milliseconds) delays the message before routeing it using the default exchange. This can be used to approximate a desired QPS.
