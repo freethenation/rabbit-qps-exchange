@@ -8,14 +8,16 @@ The 'qps-key' is used to serialize all messages sent to the 'qps_exchange' regar
 The 'qps-delay' header (in milliseconds) delays the message before routeing it using the default exchange. This can be used to approximate a desired QPS.
 You may also optionally provide a 'qps-max-priority' to add a priority to the serialization and then use rabbit priority as normal
 
-Usage: ./rabbit_qps_shovel.js [OPTIONS] COMMAND
+Usage: `./rabbit_qps_shovel.js [OPTIONS] COMMAND`
 
 commands:
-    help    show this message
-    init    create exchange and required queues then exit
-    clean   clean up idle queues then exit
-    start   ensure exchange and required queues, clean idle queues, and then start processing messages
+
+* help    show this message
+* init    create exchange and required queues then exit
+* clean   clean up idle queues then exit
+* start   ensure exchange and required queues, clean idle queues, and then start processing messages
 
 options:
-    --management Rabbit management connection string. Example http://guest:guest@localhost:15672/ (REQUIRED)
-    --connection Rabbit connection string. See https://www.rabbitmq.com/uri-spec.html (REQUIRED)
+
+* --management Rabbit management connection string. Example http://guest:guest@localhost:15672/ (REQUIRED)
+* --connection Rabbit connection string. See https://www.rabbitmq.com/uri-spec.html (REQUIRED)
