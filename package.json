@@ -1,0 +1,22 @@
+{
+  "name": "rabbit_qps_shovel",
+  "version": "1.0.0",
+  "description": "",
+  "main": "rabbit_qps_exchange.js",
+  "scripts": {
+    "test": "./node_modules/.bin/mocha --exit"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "amqplib": "^0.5.2",
+    "argh": "^0.1.4",
+    "request": "^2.87.0",
+    "request-promise-native": "^1.0.5",
+    "semaphore-async-await": "^1.5.1",
+    "why-is-node-running": "^2.0.2"
+  },
+  "devDependencies": {
+    "mocha": "^5.2.0"
+  }
+}
