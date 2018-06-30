@@ -95,9 +95,9 @@ class QpsExchange {
             Exchange logic is
             1. You publish your message to `qps_exchange` instead of the default exchange supplying a `qps-key` header and a `qps-delay` header
                 `qps-key` serializes all msgs sent to the `qps_exchange` and delays `qps-delay` (in milliseconds) before routeing then using the default exchange
-            2. If your `qps-key` has been seen before a binding in rabbit will automagically put your msg in the correct qps queue (step #4)
+            2. If your `qps-key` has been seen before a binding in rabbit will automagically put your msg in the correct qps queue
             3. Else, your message ends up the QPS_UNKNOWN_QUEUE and a consumer creates a binding for future messages and forwards the msg to the correct qps queue
-            4. A consumer ensures your desired qps is enforced (by looking at the `qps-delay` header) before youzr message is sent to the default exchange
+            4. A consumer ensures your desired qps is enforced (by looking at the `qps-delay` header) before your message is sent to the default exchange
         */
         await this.ch.assertExchange('qps_unknown_exchange', 'topic', {durable:true})
         await this.ch.assertQueue('qps_unknown_queue', {durable:true, maxLength:100000})
