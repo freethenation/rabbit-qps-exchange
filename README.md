@@ -12,15 +12,15 @@ Usage: `./rabbit_qps_shovel.js [OPTIONS] COMMAND`
 
 commands:
 
-* help    show this message
-* init    create exchange and required queues then exit
-* clean   clean up idle queues then exit
-* start   ensure exchange and required queues, clean idle queues, and then start processing messages
+* `help`   show help
+* `init`   create exchange and required queues then exit
+* `clean`  clean up idle queues then exit
+* `start`  ensure exchange and required queues, clean idle queues, and then start processing messages
 
 options:
 
-* --management Rabbit management connection string. Example http://guest:guest@localhost:15672/ (REQUIRED)
-* --connection Rabbit connection string. See https://www.rabbitmq.com/uri-spec.html (REQUIRED)
+* `--management` Rabbit management connection string. Example http://guest:guest@localhost:15672/ (REQUIRED)
+* `--connection` Rabbit connection string. See https://www.rabbitmq.com/uri-spec.html (REQUIRED)
 
 ### Installing
 * The rabbit server version must be > 3.5.0
