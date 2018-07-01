@@ -9,7 +9,7 @@ function showHelp(){
 Creates and maintains a rabbit exchange, 'qps_exchange', which when published to enforces a QPS across queues using parameters provided via rabbit message headers.
 Publish your messages to 'qps_exchange' instead of the default exchange supplying a 'qps-key' header and a 'qps-delay' header.
 The 'qps-key' is used to serialize all messages sent to the 'qps_exchange' regardless of their routing key which will be preserved
-The 'qps-delay' header (in milliseconds) delays the message before routeing it using the default exchange. This can be used to approximate a desired QPS.
+The 'qps-delay' header (in milliseconds) delays after routeing the message using the default exchange. This can be used to approximate a desired QPS.
 You may also optionally provide a 'qps-max-priority' to add a priority to the serialization and then use rabbit priority as normal
 
 Usage: ./rabbit_qps_shovel.js [OPTIONS] COMMAND
@@ -94,7 +94,7 @@ class QpsExchange {
         /*
             Exchange logic is
             1. You publish your message to `qps_exchange` instead of the default exchange supplying a `qps-key` header and a `qps-delay` header
-                `qps-key` serializes all msgs sent to the `qps_exchange` and delays `qps-delay` (in milliseconds) before routeing then using the default exchange
+                `qps-key` serializes all msgs sent to the `qps_exchange` and delays `qps-delay` (in milliseconds) after routeing then using the default exchange
             2. If your `qps-key` has been seen before a binding in rabbit will automagically put your msg in the correct qps queue
             3. Else, your message ends up the QPS_UNKNOWN_QUEUE and a consumer creates a binding for future messages and forwards the msg to the correct qps queue
             4. A consumer ensures your desired qps is enforced (by looking at the `qps-delay` header) before your message is sent to the default exchange
@@ -147,11 +147,16 @@ class QpsExchange {
             }
             var {qpsDelay} = parseHeaders(msg)
             await lock.acquire()
-            await sleep(qpsDelay)
-            lock.release()
-            //XXX: forwarding to a queue that does not exist borks the channel!
-            await this._forwardMessage(msg) //send the message to the default exchange / intended queue
-            await this.ch.ack(msg)
+            try {
+                //XXX: forwarding to a queue that does not exist borks the channel!
+                await this._forwardMessage(msg) //send the message to the default exchange / intended queue
+                await this.ch.ack(msg)
+                await sleep(qpsDelay)
+                lock.release()
+            } catch(err){
+                lock.release()
+                throw err
+            }
         }
         consume = consume.bind(this)
         var consumerTagPromise = this.ch.consume(`qps_key_${qpsKey}`, consume).then(r=>r.consumerTag)

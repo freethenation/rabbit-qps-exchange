@@ -81,8 +81,7 @@ describe('QpsExchange', function() {
         var msg = await receiveSingleMessage(ch, 'destination_test1')
         var receiveTime = msg.time
         console.info(`it took ${receiveTime - publishTime}ms for the message to arrive`)
-        assert.ok(receiveTime - publishTime > 1000, 'message arrived too quickly')
-        assert.ok(receiveTime - publishTime < 1500, 'message arrived too slowly')
+        assert.ok(receiveTime - publishTime < 500, 'message arrived too slowly')
         assert.equal(msg.properties.headers['qps-key'], 'test1') //assert headers are preserved
         assert.equal(msg.content.toString(), 'content') //assert content is preserved
     })
@@ -153,10 +152,9 @@ describe('QpsExchange', function() {
 
         console.info(`it took ${msg1.time - publishTime}ms for msg1 to arrive`)
         console.info(`it took ${msg2.time - publishTime}ms for msg2 to arrive`)
-        assert.ok(msg1.time - publishTime > 500, 'message 1 arrived too quickly')
-        assert.ok(msg1.time - publishTime < 750, 'message 1 arrived too slowly')
-        assert.ok(msg2.time - publishTime > 1000, 'message 2 arrived too quickly')
-        assert.ok(msg2.time - publishTime < 1250, 'message 2 arrived too slowly')
+        assert.ok(msg1.time - publishTime < 250, 'message 1 arrived too slowly')
+        assert.ok(msg2.time - publishTime > 500, 'message 2 arrived too quickly')
+        assert.ok(msg2.time - publishTime < 750, 'message 2 arrived too slowly')
     })
 
 
