@@ -185,7 +185,7 @@ class QpsExchange {
      */
     async consumeExistingQpsQueues(){
         var queues = await listQueues(this.managementConnString, '^qps_key_')
-        await Promise.all(queues.map(q=>q.name).map(this.consumeQpsQueue.bind(this)))
+        await Promise.all(queues.map(q=>q.name.replace(/^qps_key_/i, '')).map(this.consumeQpsQueue.bind(this)))
     }
     /**
      * Delete any queues that have not been used recently
