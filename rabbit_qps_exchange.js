@@ -3,6 +3,7 @@ const resolveUrl = require('url').resolve
 const request = require('request-promise-native')
 const amqplib = require('amqplib')
 const Lock = require('semaphore-async-await').Lock
+const EventEmitter = require('events')
 
 function showHelp(){
     console.error(`
@@ -35,7 +36,7 @@ options:
 async function listQueues(managementConnString, filterRegex){
     filterRegex = filterRegex || ".*"
     if(typeof(filterRegex)=="string") filterRegex = new RegExp(filterRegex)
-    var url = resolveUrl(managementConnString, '/api/queues')
+    var url = resolveUrl(managementConnString, `/api/queues?lengths_age=1800&lengths_incr=60`) // stats over the last 30min with 30sec samples. See https://rawcdn.githack.com/rabbitmq/rabbitmq-management/v3.7.6/priv/www/doc/stats.html
     var queues = await request({url:url, json:true})
     return queues.filter(queue=>filterRegex.test(queue.name))
 }
@@ -58,8 +59,9 @@ function sleep(milliseconds){
 }
 module.exports.sleep = sleep
 
-class QpsExchange {
+class QpsExchange extends EventEmitter {
     constructor({rabbitConnString, managementConnString}){
+        super()
         //settings
         this.rabbitConnString = rabbitConnString
         this.managementConnString = managementConnString
@@ -100,6 +102,7 @@ class QpsExchange {
             4. A consumer ensures your desired qps is enforced (by looking at the `qps-delay` header) before your message is sent to the default exchange
         */
         await this.ch.assertExchange('qps_unknown_exchange', 'topic', {durable:true})
+        this.emit("assertQueue", `qps_unknown_queue`)
         await this.ch.assertQueue('qps_unknown_queue', {durable:true, maxLength:100000})
         await this.ch.bindQueue('qps_unknown_queue', 'qps_unknown_exchange', '#') //routes all messages to the 'qps_unknown_queue'
         await this.ch.assertExchange('qps_exchange', 'headers', {durable:true, alternateExchange:'qps_unknown_exchange'}) //The first time we see a qps-key it is routed to the QPS_UNKNOWN_EXCHANGE via alternateExchange
@@ -121,6 +124,7 @@ class QpsExchange {
                 return
             }
             //ensure queue and binding to handle future messages
+            this.emit("assertQueue", `qps_key_${qpsKey}`)
             await this.ch.assertQueue(`qps_key_${qpsKey}`, {maxPriority:qpsMaxPriority, durable:false, maxLength:100000}) //XXX: messages with the same qpsKey and diff maxPriority WILL bork the channel
             await this.consumeQpsQueue(qpsKey) //start a consumer of the queue if there is not one
             //forward the message back through the qps_exchange which should hit the binding we just created
@@ -191,15 +195,15 @@ class QpsExchange {
      * Delete any queues that have not been used recently
      * @param {*} maxIdleDuration If a queue has been for this duration (in milliseconds) it will be deleted. The default is 1hr
      */
-    async deleteIdleQueues(maxIdleDuration){
-        maxIdleDuration = maxIdleDuration || 60*60*1000 //1hr
-        var now = +(new Date()) + (new Date()).getTimezoneOffset()*60*1000 //if server is not in UTC we need to correct
+    async deleteIdleQueues(){
         var idleQueues = (await listQueues(this.managementConnString, '^qps_key_'))
             .filter(q=>{
-                var idleSince = q.idle_since ? +(new Date(q.idle_since)) : now //if the queue is very new it wont have 'idle_since'
-                return now - idleSince  > maxIdleDuration
+                try{
+                    if(!q['message_stats']['publish_details']['rate']) return true
+                } catch(err){}
             })
             .map(q=>q.name)
+        idleQueues.map(q=>this.emit("deleteQueue", q))
         await Promise.all(idleQueues.map(q=>this.cancelConsumer(q)))
         await Promise.all(idleQueues.map(q=>this.ch.deleteQueue(q)))
     }
@@ -215,7 +219,6 @@ async function shutdown(exchange, cleanIdleQueuesIntervalId){
     await exchange.cancelAllConsumers()
     log('closing connection...')
     await exchange.conn.close()
-    //process.exit(0) //should exit on it's own cause node's event loop will be empty
 }
 
 async function main(argv){
@@ -232,11 +235,13 @@ async function main(argv){
         rabbitConnString: argv.connection,
         managementConnString: argv.management,
     })
+    exchange.on('deleteQueue', log.bind(null, 'deleteQueue'))
+    exchange.on('assertQueue', log.bind(null, 'assertQueue'))
     log('connecting to rabbit...')
     await exchange.connect()
     function handleRabbitError(){
         log('rabbit error: '+JSON.stringify(Array.from(arguments)))
-        process.exit(1)
+        !argv.test && process.exit(1)
     }
     exchange.conn.on('close', handleRabbitError.bind(null, 'connection close'))
     exchange.conn.on('error', handleRabbitError.bind(null, 'connection error'))
@@ -247,10 +252,12 @@ async function main(argv){
     if(command == "init" || command == "start"){
         log('initializing required exchanges and queues...')
         await exchange.initExchanges()
+        !argv.test && process.exit(0)
     }
     if(command == "clean" || command == "start"){
         log("cleaning up idle queues...")
         await exchange.deleteIdleQueues()
+        !argv.test && process.exit(0)
     }
     if(command == "start"){
         log("consuming existing queues...")
@@ -261,8 +268,8 @@ async function main(argv){
         var cleanIdleQueuesIntervalId = setInterval(exchange.deleteIdleQueues.bind(exchange), 10*60*1000) //every 10min
         log('registering for SIGINT handling...')
         process.on('SIGINT', shutdown.bind(this, exchange, cleanIdleQueuesIntervalId))
+        log('success!')
     }
-    log('success!')
 }
 module.exports.main = main //only exported for testing
 
