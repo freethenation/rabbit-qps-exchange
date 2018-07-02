@@ -163,6 +163,7 @@ class QpsExchange extends EventEmitter {
             }
         }
         consume = consume.bind(this)
+        this.emit('consume', `qps_key_${qpsKey}`)
         var consumerTagPromise = this.ch.consume(`qps_key_${qpsKey}`, consume).then(r=>r.consumerTag)
         this._consumerTags[`qps_key_${qpsKey}`] = consumerTagPromise //NOTE: We can not yield before we set this key or we will create multiple consumers
         await this.ch.bindQueue(`qps_key_${qpsKey}`, 'qps_exchange', '', {'qps-key':qpsKey})
@@ -235,6 +236,7 @@ async function main(argv){
         rabbitConnString: argv.connection,
         managementConnString: argv.management,
     })
+    exchange.on('consume', log.bind(null, 'consume'))
     exchange.on('deleteQueue', log.bind(null, 'deleteQueue'))
     exchange.on('assertQueue', log.bind(null, 'assertQueue'))
     log('connecting to rabbit...')
