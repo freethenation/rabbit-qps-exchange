@@ -220,6 +220,8 @@ async function shutdown(exchange, cleanIdleQueuesIntervalId){
     await exchange.cancelAllConsumers()
     log('closing connection...')
     await exchange.conn.close()
+    await sleep(3000)
+    process.exit(0)
 }
 
 async function main(argv){
@@ -254,12 +256,10 @@ async function main(argv){
     if(command == "init" || command == "start"){
         log('initializing required exchanges and queues...')
         await exchange.initExchanges()
-        !argv.test && process.exit(0)
     }
     if(command == "clean" || command == "start"){
         log("cleaning up idle queues...")
         await exchange.deleteIdleQueues()
-        !argv.test && process.exit(0)
     }
     if(command == "start"){
         log("consuming existing queues...")
@@ -270,7 +270,10 @@ async function main(argv){
         var cleanIdleQueuesIntervalId = setInterval(exchange.deleteIdleQueues.bind(exchange), 10*60*1000) //every 10min
         log('registering for SIGINT handling...')
         process.on('SIGINT', shutdown.bind(this, exchange, cleanIdleQueuesIntervalId))
-        log('success!')
+    }
+    log('success!')
+    if((command == "init" || command == "start") && !argv.test){
+        process.exit(0)
     }
 }
 module.exports.main = main //only exported for testing
