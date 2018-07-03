@@ -272,7 +272,7 @@ async function main(argv){
         process.on('SIGINT', shutdown.bind(this, exchange, cleanIdleQueuesIntervalId))
     }
     log('success!')
-    if((command == "init" || command == "start") && !argv.test){
+    if((command == "init" || command == "clean") && !argv.test){
         process.exit(0)
     }
 }
