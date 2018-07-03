@@ -88,6 +88,7 @@ class QpsExchange extends EventEmitter {
         this.ch.on("close", function() {
             console.error("[AMQP] channel closed")
         })
+        await this.ch.prefetch(10)
     }
     /**
      * Inits exchanges and required queues
