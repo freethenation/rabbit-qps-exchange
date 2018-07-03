@@ -36,7 +36,7 @@ options:
 async function listQueues(managementConnString, filterRegex){
     filterRegex = filterRegex || ".*"
     if(typeof(filterRegex)=="string") filterRegex = new RegExp(filterRegex)
-    var url = resolveUrl(managementConnString, `/api/queues?lengths_age=1800&lengths_incr=60`) // stats over the last 30min with 30sec samples. See https://rawcdn.githack.com/rabbitmq/rabbitmq-management/v3.7.6/priv/www/doc/stats.html
+    var url = resolveUrl(managementConnString, `/api/queues?lengths_age=900&lengths_incr=60`) // stats over the last 15min with 30sec samples. See https://rawcdn.githack.com/rabbitmq/rabbitmq-management/v3.7.6/priv/www/doc/stats.html
     var queues = await request({url:url, json:true})
     return queues.filter(queue=>filterRegex.test(queue.name))
 }
@@ -200,7 +200,7 @@ class QpsExchange extends EventEmitter {
         var idleQueues = (await listQueues(this.managementConnString, '^qps_key_'))
             .filter(q=>{
                 try{
-                    if(!q['message_stats']['publish_details']['rate']) return true
+                    return !q['message_stats']['publish_details']['rate'] && !q['messages']
                 } catch(err){}
             })
             .map(q=>q.name)
@@ -267,7 +267,7 @@ async function main(argv){
         log("consuming new/unknown 'qps-key'...")
         await exchange.consumeQpsUnknownQueue()
         log('scheduling automatic cleanup of idle queues...')
-        var cleanIdleQueuesIntervalId = setInterval(exchange.deleteIdleQueues.bind(exchange), 10*60*1000) //every 10min
+        var cleanIdleQueuesIntervalId = setInterval(exchange.deleteIdleQueues.bind(exchange), 60*60*1000) //every 60min
         log('registering for SIGINT handling...')
         process.on('SIGINT', shutdown.bind(this, exchange, cleanIdleQueuesIntervalId))
     }
