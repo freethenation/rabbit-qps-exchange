@@ -135,7 +135,7 @@ describe('QpsExchange', function() {
     })
 
 
-    it('should not send messages untill batch is full', async function(){
+    it('should not send messages until batch is full', async function(){
         var ch = exchange.ch
         await ch.assertQueue('destination_test1', {durable:false})
         await exchange.initExchanges()
