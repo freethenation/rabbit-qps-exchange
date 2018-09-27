@@ -121,6 +121,51 @@ describe('QpsExchange', function() {
         return (await receiveXMessages(ch, queue, 1, 2000))[0]
     }
 
+    it('should timeout and send batch', async function(){
+        var ch = exchange.ch
+        await ch.assertQueue('destination_test1', {durable:false})
+        await exchange.initExchanges()
+        await exchange.consumeQpsUnknownQueue()
+        await ch.publish('qps_exchange', 'destination_test1', new Buffer('contentbt'), {
+            headers:{'qps-key':'test1','qps-delay':'10','qps-batch-size':'2','qps-batch-timeout':100}
+        })
+        var msg = await receiveSingleMessage(ch, 'destination_test1')
+        assert.equal(msg.properties.headers['qps-key'], 'test1') //assert headers are preserved
+        assert.equal(msg.content.toString(), 'contentbt') //assert content is preserved
+    })
+
+
+    it('should not send messages untill batch is full', async function(){
+        var ch = exchange.ch
+        await ch.assertQueue('destination_test1', {durable:false})
+        await exchange.initExchanges()
+        await exchange.consumeQpsUnknownQueue()
+        await ch.publish('qps_exchange', 'destination_test1', new Buffer('content1'), {
+            headers:{'qps-key':'test1','qps-delay':'10','qps-batch-size':'2','qps-batch-timeout':10*1000}
+        })
+        try{
+            await receiveXMessages(ch, 'destination_test1', 1, 200)
+            assert(false, "Should have failed to send message")
+        } catch(err){}
+    })
+
+    it('should optionally combine batches into one message', async function(){
+        var ch = exchange.ch
+        await ch.assertQueue('destination_test1', {durable:false})
+        await exchange.initExchanges()
+        await exchange.consumeQpsUnknownQueue()
+        await ch.publish('qps_exchange', 'destination_test1', new Buffer('content1'), {
+            headers:{'qps-key':'test1','qps-delay':'10','qps-batch-size':'2','qps-batch-timeout':10*1000, 'qps-batch-combine':true}
+        })
+        await sleep(100) //sleep to ensure message order cause awaiting a publish does not confirm without rabbit extension/mode
+        await ch.publish('qps_exchange', 'destination_test1', new Buffer('content2'), {
+            headers:{'qps-key':'test1','qps-delay':'10','qps-batch-size':'2','qps-batch-timeout':10*1000, 'qps-batch-combine':true}
+        })
+        var msg = await receiveSingleMessage(ch, 'destination_test1')
+        assert.equal(msg.properties.headers['qps-key'], 'test1') //assert headers are preserved
+        assert.equal(msg.content.toString(), 'content1\ncontent2') //assert content is preserved
+    })
+
     it('should enforce qps across queues', async function(){
         var ch = exchange.ch
         await ch.assertQueue('destination_test1', {durable:false})

@@ -4,6 +4,7 @@ const request = require('request-promise-native')
 const amqplib = require('amqplib')
 const Lock = require('semaphore-async-await').Lock
 const EventEmitter = require('events')
+const NEWLINE_BUFFER = Buffer.from('\n')
 
 function showHelp(){
     console.error(`
@@ -44,13 +45,26 @@ module.exports.listQueues = listQueues
 
 /** Given a message this function parses all relevant headers  */
 function parseHeaders(msg){
-    var qpsMaxPriority = parseInt(msg.properties.headers && msg.properties.headers['qps-max-priority'])
+    var qpsMaxPriority = parseInt(msg.properties.headers && msg.properties.headers['qps-max-priority']) //needs to be an int
     qpsMaxPriority = isNaN(qpsMaxPriority) ? undefined : qpsMaxPriority
     return {
         qpsKey: msg.properties.headers && msg.properties.headers['qps-key'] || null,
         qpsDelay: msg.properties.headers && msg.properties.headers['qps-delay'] || 1000,
         qpsMaxPriority: qpsMaxPriority,
+        qpsBatchSize: msg.properties.headers['qps-batch-size'] || 1,
+        qpsBatchTimeout: msg.properties.headers['qps-batch-timeout'] || 1000,
+        qpsBatchCombine: msg.properties.headers['qps-batch-combine'] || false,
     }
+}
+
+function joinBuffersWithNewLines(buffers){
+    var content = []
+    buffers.forEach(msg=>{
+        content.push(msg)
+        content.push(NEWLINE_BUFFER)
+    })
+    content.pop() //remove trailing newline
+    return Buffer.concat(content)
 }
 
 /** Utility function to sleep for a given number of milliseconds */
@@ -69,9 +83,10 @@ class QpsExchange extends EventEmitter {
         this._consumerTags = {} //map from queue name to consumer tag promise. Used to ensure there is only ever one consumer for a queue
         this.conn = null //rabbit connection
         this.ch = null //rabbit channel
+        this.prefetch = 1
     }
-    async _forwardMessage(msg, exchange){
-        await this.ch.publish(exchange||'', msg.fields.routingKey, msg.content, {
+    async _forwardMessage(msg, exchange, content){
+        await this.ch.publish(exchange||'', msg.fields.routingKey, content||msg.content, {
             headers: msg.properties.headers,
             priority: msg.priority
         })
@@ -88,8 +103,15 @@ class QpsExchange extends EventEmitter {
         this.ch.on("close", function() {
             console.error("[AMQP] channel closed")
         })
-        await this.ch.prefetch(10)
+        await this.setPrefetch(10)
     }
+
+    async setPrefetch(prefetch){
+        if(prefetch <= this.prefetch) return
+        this.prefetch = prefetch
+        return await this.ch.prefetch(this.prefetch)
+    }
+
     /**
      * Inits exchanges and required queues
      */
@@ -144,23 +166,50 @@ class QpsExchange extends EventEmitter {
     async consumeQpsQueue(qpsKey){
         if(this._consumerTags[`qps_key_${qpsKey}`]) return this._consumerTags[`qps_key_${qpsKey}`]
         var lock = new Lock()
+        var batchList = []
+        var batchStartTimeoutId = null
+        var qpsDelay, qpsBatchSize, qpsBatchTimeout, qpsBatchCombine
+        async function sendFunc(){
+            if(batchList.length == 0) return
+            await lock.acquire()
+            try {
+                //XXX: forwarding to a queue that does not exist borks the channel!
+                //send the message to the default exchange / intended queue
+                if(qpsBatchCombine && batchList.length > 1){
+                    var content = joinBuffersWithNewLines(batchList.map(msg=>msg.content))
+                    await this._forwardMessage(batchList[0], null, content)
+                } else {
+                    await Promise.all(batchList.map(msg=>this._forwardMessage(msg)))
+                }
+                await Promise.all(batchList.map(msg=>this.ch.ack(msg)))
+                await sleep(qpsDelay)
+                batchList.splice(0) //clear list
+                lock.release()
+            } catch(err){
+                lock.release()
+                throw err
+            }
+        }
+        sendFunc = sendFunc.bind(this)
         async function consume(msg){
             if(msg == null){
                 //rabbit has canceled us http://www.rabbitmq.com/consumer-cancel.html
                 delete this._consumerTags[`qps_key_${qpsKey}`]
                 return
             }
-            var {qpsDelay} = parseHeaders(msg)
+            ({qpsDelay, qpsBatchSize, qpsBatchTimeout, qpsBatchCombine} = parseHeaders(msg))
+            await this.setPrefetch(qpsBatchSize) //make sure we can handle the batch size
             await lock.acquire()
-            try {
-                //XXX: forwarding to a queue that does not exist borks the channel!
-                await this._forwardMessage(msg) //send the message to the default exchange / intended queue
-                await this.ch.ack(msg)
-                await sleep(qpsDelay)
-                lock.release()
-            } catch(err){
-                lock.release()
-                throw err
+            batchList.push(msg)
+            lock.release()
+            //set batch timeout
+            if(batchList.length >= qpsBatchSize){
+                clearTimeout(batchStartTimeoutId) //so we don't resend the batch
+                batchStartTimeoutId = null
+                await sendFunc()
+            }
+            else if(batchStartTimeoutId === null){
+                batchStartTimeoutId = setTimeout(sendFunc, qpsBatchTimeout)
             }
         }
         consume = consume.bind(this)
