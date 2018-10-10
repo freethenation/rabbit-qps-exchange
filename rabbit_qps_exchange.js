@@ -194,8 +194,6 @@ class QpsExchange extends EventEmitter {
             ({qpsDelay, qpsBatchSize, qpsBatchTimeout, qpsBatchCombine, qpsDelayLockKey} = parseHeaders(msg))
             qpsDelayLockKey = qpsDelayLockKey || qpsKey
             sleepLock = this.globalSleepLocks[qpsDelayLockKey] || (this.globalSleepLocks[qpsDelayLockKey] = new Lock())
-            console.log(`Using lock key ${qpsDelayLockKey}`)
-            console.log(`Using lock`, sleepLock)
 
             await sleepLock.acquire()
             try {
