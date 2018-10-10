@@ -202,6 +202,41 @@ describe('QpsExchange', function() {
         assert.ok(msg2.time - publishTime < 750, 'message 2 arrived too slowly')
     })
 
+    it('should enforce qps across global lock key', async function(){
+        var ch = exchange.ch
+        await ch.assertQueue('destination_test1', {durable:false})
+        await ch.assertQueue('destination_test2', {durable:false})
+        await exchange.initExchanges()
+        await exchange.consumeQpsUnknownQueue()
+        //publish
+        var publishTime = +(new Date())
+        await ch.publish('qps_exchange', 'destination_test1', new Buffer('content1'), {
+            headers:{'qps-key':'test1','qps-delay':'500','qps-global-lock-key':'bob'}
+        })
+        await sleep(100) //sleep to ensure message order cause awaiting a publish does not confirm without rabbit extension/mode
+        await ch.publish('qps_exchange', 'destination_test2', new Buffer('content2'), {
+            headers:{'qps-key':'test2','qps-delay':'500','qps-global-lock-key':'bob'}
+        })
+        //check results
+        var [msg1, msg2] = await Promise.all([
+            receiveSingleMessage(ch, 'destination_test1'),
+            receiveSingleMessage(ch, 'destination_test2'),
+        ])
+
+        //this.timeout(60*60*1000)
+        //await sleep(60*60*1000)
+
+        assert.equal(msg1.properties.headers['qps-key'], 'test1') //assert headers are preserved
+        assert.equal(msg1.content.toString(), 'content1') //assert content is preserved
+        assert.equal(msg2.properties.headers['qps-key'], 'test2') //assert headers are preserved
+        assert.equal(msg2.content.toString(), 'content2') //assert content is preserved
+
+        console.info(`it took ${msg1.time - publishTime}ms for msg1 to arrive`)
+        console.info(`it took ${msg2.time - publishTime}ms for msg2 to arrive`)
+        assert.ok(msg1.time - publishTime < 250, 'message 1 arrived too slowly')
+        assert.ok(msg2.time - publishTime > 500, 'message 2 arrived too quickly')
+        assert.ok(msg2.time - publishTime < 750, 'message 2 arrived too slowly')
+    })
 
     it('should respect message priority', async function(){
         var ch = exchange.ch

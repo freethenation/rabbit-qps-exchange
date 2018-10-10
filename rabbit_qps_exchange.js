@@ -54,6 +54,7 @@ function parseHeaders(msg){
         qpsBatchSize: msg.properties.headers['qps-batch-size'] || 1,
         qpsBatchTimeout: msg.properties.headers['qps-batch-timeout'] || 1000,
         qpsBatchCombine: msg.properties.headers['qps-batch-combine'] || false,
+        qpsGlobalLockKey: msg.properties.headers['qps-global-lock-key'] || null,
     }
 }
 
@@ -84,6 +85,7 @@ class QpsExchange extends EventEmitter {
         this.conn = null //rabbit connection
         this.ch = null //rabbit channel
         this.prefetch = 1
+        this.globalSleepLocks = {}
     }
     async _forwardMessage(msg, exchange, content){
         await this.ch.publish(exchange||'', msg.fields.routingKey, content||msg.content, {
@@ -159,6 +161,7 @@ class QpsExchange extends EventEmitter {
         this._consumerTags['qps_unknown_queue'] = consumerTagPromise
         return await consumerTagPromise //can be used to cancel the consume
     }
+
     /**
      * Starts a consumer that shovels all message for a given `qps-key`. The consumer will respect the `qps-delay` header
      * @param {*} qpsKey The `qps-key` to shovel messages for
@@ -167,7 +170,7 @@ class QpsExchange extends EventEmitter {
         if(this._consumerTags[`qps_key_${qpsKey}`]) return this._consumerTags[`qps_key_${qpsKey}`]
         var batchList = []
         var batchStartTimeoutId = null
-        var qpsDelay, qpsBatchSize, qpsBatchTimeout, qpsBatchCombine
+        var qpsDelay, qpsBatchSize, qpsBatchTimeout, qpsBatchCombine, qpsGlobalLockKey
         async function sendFunc() {
             if(batchList.length == 0) return
             //XXX: forwarding to a queue that does not exist borks the channel!
@@ -185,8 +188,18 @@ class QpsExchange extends EventEmitter {
             batchStartTimeoutId = null
         }
         sendFunc = sendFunc.bind(this)
-        var sleepLock = new Lock()
+
+        var sleepLock  // the actual lock that will be used by this code, may be localSleepLock or something from globalSleepLocks
+        var localSleepLock = new Lock()  // use this if we do NOT have a global lock key
         async function consume(msg){
+            ({qpsDelay, qpsBatchSize, qpsBatchTimeout, qpsBatchCombine, qpsGlobalLockKey} = parseHeaders(msg))
+            if (qpsGlobalLockKey) {
+                sleepLock = this.globalSleepLocks[qpsGlobalLockKey] || (this.globalSleepLocks[qpsGlobalLockKey] = new Lock())
+            }
+            else {
+                sleepLock = localSleepLock
+            }
+
             await sleepLock.acquire()
             try {
                 if(msg == null){
@@ -194,7 +207,6 @@ class QpsExchange extends EventEmitter {
                     delete this._consumerTags[`qps_key_${qpsKey}`]
                     return
                 }
-                ({qpsDelay, qpsBatchSize, qpsBatchTimeout, qpsBatchCombine} = parseHeaders(msg))
                 await this.setPrefetch(qpsBatchSize) //make sure we can handle the batch size
                 batchList.push(msg)
 
