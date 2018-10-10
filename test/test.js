@@ -211,11 +211,11 @@ describe('QpsExchange', function() {
         //publish
         var publishTime = +(new Date())
         await ch.publish('qps_exchange', 'destination_test1', new Buffer('content1'), {
-            headers:{'qps-key':'test1','qps-delay':'500','qps-global-lock-key':'bob'}
+            headers:{'qps-key':'test1','qps-delay':'500','qps-delay-lock-key':'bob'}
         })
         await sleep(100) //sleep to ensure message order cause awaiting a publish does not confirm without rabbit extension/mode
         await ch.publish('qps_exchange', 'destination_test2', new Buffer('content2'), {
-            headers:{'qps-key':'test2','qps-delay':'500','qps-global-lock-key':'bob'}
+            headers:{'qps-key':'test2','qps-delay':'500','qps-delay-lock-key':'bob'}
         })
         //check results
         var [msg1, msg2] = await Promise.all([

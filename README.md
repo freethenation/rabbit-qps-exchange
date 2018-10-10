@@ -22,6 +22,18 @@ options:
 * `--management` Rabbit management connection string. Example http://guest:guest@localhost:15672/ (REQUIRED)
 * `--connection` Rabbit connection string. See https://www.rabbitmq.com/uri-spec.html (REQUIRED)
 
+### Configuration headers
+
+| Header              | Description                                                                                                                | Type      | Default         |
+|---------------------|----------------------------------------------------------------------------------------------------------------------------|-----------|-----------------|
+| qps-key             | Used to serialize all messages sent to the `qps_exchange`                                                                  | string    | (required)      |
+| qps-delay           | Delay (in milliseconds) to wait after routing the message to the default exchange - used to approximate QPS                | int/float | 1000 ms         |
+| qps-max-priority    | Can be set along with normal Rabbit priority headers to allow prioritization                                               | integer   | no priority     |
+| qps-batch-size      | If set, will group this many messages together into a batch, all of which will be sent with no other batches between them  | integer   | 1 (no batching) |
+| qps-batch-timeout   | Maximum time (in millisecond) to wait for a full batch                                                                     | int/float | 1000 ms         |
+| qps-batch-combine   | If set, will combine batch messages together with ASCII newlines (`\n`, `0x0A`)                                            | boolean   | false           |
+| qps-delay-lock-key  | Can be set to share the delay lock between multiple QPS keys - defaults to `qps-key` if not set                            | string    | `qps-key`       |
+
 ### Installing
 * The rabbit server version must be > 3.5.0
 * The rabbit server must have the management plugin installed (it's http interface is used)

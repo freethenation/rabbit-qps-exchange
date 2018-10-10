@@ -9,10 +9,7 @@ const NEWLINE_BUFFER = Buffer.from('\n')
 function showHelp(){
     console.error(`
 Creates and maintains a rabbit exchange, 'qps_exchange', which when published to enforces a QPS across queues using parameters provided via rabbit message headers.
-Publish your messages to 'qps_exchange' instead of the default exchange supplying a 'qps-key' header and a 'qps-delay' header.
-The 'qps-key' is used to serialize all messages sent to the 'qps_exchange' regardless of their routing key which will be preserved
-The 'qps-delay' header (in milliseconds) delays after routeing the message using the default exchange. This can be used to approximate a desired QPS.
-You may also optionally provide a 'qps-max-priority' to add a priority to the serialization and then use rabbit priority as normal
+See README.md for more usage details
 
 Usage: ./rabbit_qps_shovel.js [OPTIONS] COMMAND
 
@@ -28,6 +25,9 @@ options:
     `.trim())
     process.exit(1)
 }
+
+const MAX_LENGTH = 300000
+const QUEUE_PREFIX = 'qps_key'
 
 /**
  * Returns all the queues for a rabbit server using the management http interface
@@ -45,7 +45,7 @@ module.exports.listQueues = listQueues
 
 /** Given a message this function parses all relevant headers  */
 function parseHeaders(msg){
-    var qpsMaxPriority = parseInt(msg.properties.headers && msg.properties.headers['qps-max-priority']) //needs to be an int
+    var qpsMaxPriority = parseInt(msg.properties.headers && msg.properties.headers['qps-max-priority']) //needs to be an int not a float
     qpsMaxPriority = isNaN(qpsMaxPriority) ? undefined : qpsMaxPriority
     return {
         qpsKey: msg.properties.headers && msg.properties.headers['qps-key'] || null,
@@ -54,7 +54,7 @@ function parseHeaders(msg){
         qpsBatchSize: msg.properties.headers['qps-batch-size'] || 1,
         qpsBatchTimeout: msg.properties.headers['qps-batch-timeout'] || 1000,
         qpsBatchCombine: msg.properties.headers['qps-batch-combine'] || false,
-        qpsGlobalLockKey: msg.properties.headers['qps-global-lock-key'] || null,
+        qpsDelayLockKey: msg.properties.headers['qps-delay-lock-key'] || null,
     }
 }
 
@@ -128,7 +128,7 @@ class QpsExchange extends EventEmitter {
         */
         await this.ch.assertExchange('qps_unknown_exchange', 'topic', {durable:true})
         this.emit("assertQueue", `qps_unknown_queue`)
-        await this.ch.assertQueue('qps_unknown_queue', {durable:true, maxLength:100000})
+        await this.ch.assertQueue('qps_unknown_queue', {durable:true, maxLength:MAX_LENGTH})
         await this.ch.bindQueue('qps_unknown_queue', 'qps_unknown_exchange', '#') //routes all messages to the 'qps_unknown_queue'
         await this.ch.assertExchange('qps_exchange', 'headers', {durable:true, alternateExchange:'qps_unknown_exchange'}) //The first time we see a qps-key it is routed to the QPS_UNKNOWN_EXCHANGE via alternateExchange
     }
@@ -149,8 +149,8 @@ class QpsExchange extends EventEmitter {
                 return
             }
             //ensure queue and binding to handle future messages
-            this.emit("assertQueue", `qps_key_${qpsKey}`)
-            await this.ch.assertQueue(`qps_key_${qpsKey}`, {maxPriority:qpsMaxPriority, durable:false, maxLength:100000}) //XXX: messages with the same qpsKey and diff maxPriority WILL bork the channel
+            this.emit("assertQueue", `${QUEUE_PREFIX}_${qpsKey}`)
+            await this.ch.assertQueue(`${QUEUE_PREFIX}_${qpsKey}`, {maxPriority:qpsMaxPriority, durable:false, maxLength:MAX_LENGTH}) //XXX: messages with the same qpsKey and diff maxPriority WILL bork the channel
             await this.consumeQpsQueue(qpsKey) //start a consumer of the queue if there is not one
             //forward the message back through the qps_exchange which should hit the binding we just created
             await this._forwardMessage(msg, 'qps_exchange')
@@ -167,10 +167,10 @@ class QpsExchange extends EventEmitter {
      * @param {*} qpsKey The `qps-key` to shovel messages for
      */
     async consumeQpsQueue(qpsKey){
-        if(this._consumerTags[`qps_key_${qpsKey}`]) return this._consumerTags[`qps_key_${qpsKey}`]
+        if(this._consumerTags[`${QUEUE_PREFIX}_${qpsKey}`]) return this._consumerTags[`${QUEUE_PREFIX}_${qpsKey}`]
         var batchList = []
         var batchStartTimeoutId = null
-        var qpsDelay, qpsBatchSize, qpsBatchTimeout, qpsBatchCombine, qpsGlobalLockKey
+        var qpsDelay, qpsBatchSize, qpsBatchTimeout, qpsBatchCombine, qpsDelayLockKey
         async function sendFunc() {
             if(batchList.length == 0) return
             //XXX: forwarding to a queue that does not exist borks the channel!
@@ -189,22 +189,19 @@ class QpsExchange extends EventEmitter {
         }
         sendFunc = sendFunc.bind(this)
 
-        var sleepLock  // the actual lock that will be used by this code, may be localSleepLock or something from globalSleepLocks
-        var localSleepLock = new Lock()  // use this if we do NOT have a global lock key
+        var sleepLock
         async function consume(msg){
-            ({qpsDelay, qpsBatchSize, qpsBatchTimeout, qpsBatchCombine, qpsGlobalLockKey} = parseHeaders(msg))
-            if (qpsGlobalLockKey) {
-                sleepLock = this.globalSleepLocks[qpsGlobalLockKey] || (this.globalSleepLocks[qpsGlobalLockKey] = new Lock())
-            }
-            else {
-                sleepLock = localSleepLock
-            }
+            ({qpsDelay, qpsBatchSize, qpsBatchTimeout, qpsBatchCombine, qpsDelayLockKey} = parseHeaders(msg))
+            qpsDelayLockKey = qpsDelayLockKey || qpsKey
+            sleepLock = this.globalSleepLocks[qpsDelayLockKey] || (this.globalSleepLocks[qpsDelayLockKey] = new Lock())
+            console.log(`Using lock key ${qpsDelayLockKey}`)
+            console.log(`Using lock`, sleepLock)
 
             await sleepLock.acquire()
             try {
                 if(msg == null){
                     //rabbit has canceled us http://www.rabbitmq.com/consumer-cancel.html
-                    delete this._consumerTags[`qps_key_${qpsKey}`]
+                    delete this._consumerTags[`${QUEUE_PREFIX}_${qpsKey}`]
                     return
                 }
                 await this.setPrefetch(qpsBatchSize) //make sure we can handle the batch size
@@ -233,10 +230,10 @@ class QpsExchange extends EventEmitter {
             }
         }
         consume = consume.bind(this)
-        this.emit('consume', `qps_key_${qpsKey}`)
-        var consumerTagPromise = this.ch.consume(`qps_key_${qpsKey}`, consume).then(r=>r.consumerTag)
-        this._consumerTags[`qps_key_${qpsKey}`] = consumerTagPromise //NOTE: We can not yield before we set this key or we will create multiple consumers
-        await this.ch.bindQueue(`qps_key_${qpsKey}`, 'qps_exchange', '', {'qps-key':qpsKey})
+        this.emit('consume', `${QUEUE_PREFIX}_${qpsKey}`)
+        var consumerTagPromise = this.ch.consume(`${QUEUE_PREFIX}_${qpsKey}`, consume).then(r=>r.consumerTag)
+        this._consumerTags[`${QUEUE_PREFIX}_${qpsKey}`] = consumerTagPromise //NOTE: We can not yield before we set this key or we will create multiple consumers
+        await this.ch.bindQueue(`${QUEUE_PREFIX}_${qpsKey}`, 'qps_exchange', '', {'qps-key':qpsKey})
         return await consumerTagPromise //can be used to cancel the consume
     }
     /**
@@ -259,15 +256,15 @@ class QpsExchange extends EventEmitter {
      * Uses the management interface to discover and existing `qps-key` queues and starts a consumer for them
      */
     async consumeExistingQpsQueues(){
-        var queues = await listQueues(this.managementConnString, '^qps_key_')
-        await Promise.all(queues.map(q=>q.name.replace(/^qps_key_/i, '')).map(this.consumeQpsQueue.bind(this)))
+        var queues = await listQueues(this.managementConnString, `^${QUEUE_PREFIX}_`)
+        await Promise.all(queues.map(q=>q.name.replace(new RegExp(`${QUEUE_PREFIX}_`), '')).map(this.consumeQpsQueue.bind(this)))
     }
     /**
      * Delete any queues that have not been used recently
      * @param {*} maxIdleDuration If a queue has been for this duration (in milliseconds) it will be deleted. The default is 1hr
      */
     async deleteIdleQueues(){
-        var idleQueues = (await listQueues(this.managementConnString, '^qps_key_'))
+        var idleQueues = (await listQueues(this.managementConnString, `^${QUEUE_PREFIX}_`))
             .filter(q=>{
                 try{
                     return !q['message_stats']['publish_details']['rate'] && !q['messages']
