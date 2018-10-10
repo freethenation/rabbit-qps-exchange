@@ -165,51 +165,59 @@ class QpsExchange extends EventEmitter {
      */
     async consumeQpsQueue(qpsKey){
         if(this._consumerTags[`qps_key_${qpsKey}`]) return this._consumerTags[`qps_key_${qpsKey}`]
-        var lock = new Lock()
         var batchList = []
         var batchStartTimeoutId = null
         var qpsDelay, qpsBatchSize, qpsBatchTimeout, qpsBatchCombine
-        async function sendFunc(){
+        async function sendFunc() {
             if(batchList.length == 0) return
-            await lock.acquire()
-            try {
-                //XXX: forwarding to a queue that does not exist borks the channel!
-                //send the message to the default exchange / intended queue
-                if(qpsBatchCombine && batchList.length > 1){
-                    var content = joinBuffersWithNewLines(batchList.map(msg=>msg.content))
-                    await this._forwardMessage(batchList[0], null, content)
-                } else {
-                    await Promise.all(batchList.map(msg=>this._forwardMessage(msg)))
-                }
-                await Promise.all(batchList.map(msg=>this.ch.ack(msg)))
-                await sleep(qpsDelay)
-                batchList.splice(0) //clear list
-                lock.release()
-            } catch(err){
-                lock.release()
-                throw err
+            //XXX: forwarding to a queue that does not exist borks the channel!
+            //send the message to the default exchange / intended queue
+            if(qpsBatchCombine && batchList.length > 1){
+                var content = joinBuffersWithNewLines(batchList.map(msg=>msg.content))
+                await this._forwardMessage(batchList[0], null, content)
+            } else {
+                await Promise.all(batchList.map(msg=>this._forwardMessage(msg)))
             }
+            await Promise.all(batchList.map(msg=>this.ch.ack(msg)))
+            await sleep(qpsDelay)
+            batchList.splice(0) //clear list
+            clearTimeout(batchStartTimeoutId) //clear timeout so we don't resend the batch
+            batchStartTimeoutId = null
         }
         sendFunc = sendFunc.bind(this)
+        var sleepLock = new Lock()
         async function consume(msg){
-            if(msg == null){
-                //rabbit has canceled us http://www.rabbitmq.com/consumer-cancel.html
-                delete this._consumerTags[`qps_key_${qpsKey}`]
-                return
+            await sleepLock.acquire()
+            try {
+                if(msg == null){
+                    //rabbit has canceled us http://www.rabbitmq.com/consumer-cancel.html
+                    delete this._consumerTags[`qps_key_${qpsKey}`]
+                    return
+                }
+                ({qpsDelay, qpsBatchSize, qpsBatchTimeout, qpsBatchCombine} = parseHeaders(msg))
+                await this.setPrefetch(qpsBatchSize) //make sure we can handle the batch size
+                batchList.push(msg)
+
+                // Send the batch if it is full
+                if(batchList.length >= qpsBatchSize) {
+                    await sendFunc()
+                }
+
+                // After X seconds, send the batch even if it isn't full
+                else if(batchStartTimeoutId === null){
+                    batchStartTimeoutId = setTimeout(async ()=>{
+                        await sleepLock.acquire()
+                        try {
+                            await sendFunc()
+                        }
+                        finally {
+                            sleepLock.release()
+                        }
+                    }, qpsBatchTimeout)
+                }
             }
-            ({qpsDelay, qpsBatchSize, qpsBatchTimeout, qpsBatchCombine} = parseHeaders(msg))
-            await this.setPrefetch(qpsBatchSize) //make sure we can handle the batch size
-            await lock.acquire()
-            batchList.push(msg)
-            lock.release()
-            //set batch timeout
-            if(batchList.length >= qpsBatchSize){
-                clearTimeout(batchStartTimeoutId) //so we don't resend the batch
-                batchStartTimeoutId = null
-                await sendFunc()
-            }
-            else if(batchStartTimeoutId === null){
-                batchStartTimeoutId = setTimeout(sendFunc, qpsBatchTimeout)
+            finally {
+                sleepLock.release()
             }
         }
         consume = consume.bind(this)
