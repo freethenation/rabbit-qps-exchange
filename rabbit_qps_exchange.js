@@ -150,8 +150,12 @@ class QpsExchange extends EventEmitter {
             }
             //ensure queue and binding to handle future messages
             this.emit("assertQueue", `${QUEUE_PREFIX}_${qpsKey}`)
-            let durable = qpsKey.indexOf('listing-') !== -1
-            await this.ch.assertQueue(`${QUEUE_PREFIX}_${qpsKey}`, {maxPriority:qpsMaxPriority, durable:durable, maxLength:MAX_LENGTH}) //XXX: messages with the same qpsKey and diff maxPriority WILL bork the channel
+            let args = {
+                maxPriority:qpsMaxPriority,
+                durable:(qpsKey.indexOf('listing-') !== -1),
+                maxLength:MAX_LENGTH
+            }
+            await this.ch.assertQueue(`${QUEUE_PREFIX}_${qpsKey}`, args) //XXX: messages with the same qpsKey and diff maxPriority WILL bork the channel
             await this.consumeQpsQueue(qpsKey) //start a consumer of the queue if there is not one
             //forward the message back through the qps_exchange which should hit the binding we just created
             await this._forwardMessage(msg, 'qps_exchange')
