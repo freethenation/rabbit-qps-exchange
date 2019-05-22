@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+"use strict";
 const resolveUrl = require('url').resolve
 const request = require('request-promise-native')
 const amqplib = require('amqplib')
@@ -73,6 +74,69 @@ function sleep(milliseconds){
     return new Promise((resolve)=>setTimeout(resolve, milliseconds))
 }
 module.exports.sleep = sleep
+
+class QpsExchangeConsumer {
+    constructor(qpsExchange){
+        this.qpsExchange = qpsExchange
+        this.batchList = []
+        this.batchStartTimeoutId = null
+    }
+    async send({qpsBatchCombine, qpsDelay}) {
+        var batchList = this.batchList
+        if(batchList.length == 0) return
+        //XXX: forwarding to a queue that does not exist borks the channel!
+        //send the message to the default exchange / intended queue
+        if(qpsBatchCombine && batchList.length > 1){
+            var content = joinBuffersWithNewLines(batchList.map(msg=>msg.content))
+            await this.qpsExchange._forwardMessage(batchList[0], null, content)
+        } else {
+            await Promise.all(batchList.map(msg=>this.qpsExchange._forwardMessage(msg)))
+        }
+        await Promise.all(batchList.map(msg=>this.qpsExchange.ch.ack(msg)))
+        await sleep(qpsDelay)
+        batchList.splice(0) //clear list
+        clearTimeout(this.batchStartTimeoutId) //clear timeout so we don't resend the batch
+        this.batchStartTimeoutId = null
+    }
+    async consume(msg) {
+        var headers = parseHeaders(msg)
+        var {qpsBatchSize, qpsBatchTimeout, qpsDelayLockKey, qpsKey} = headers
+        qpsDelayLockKey = qpsDelayLockKey || qpsKey
+        var sleepLock = this.qpsExchange.globalSleepLocks[qpsDelayLockKey] || (this.qpsExchange.globalSleepLocks[qpsDelayLockKey] = new Lock())
+
+        await sleepLock.acquire()
+        try {
+            if(msg == null){
+                //rabbit has canceled us http://www.rabbitmq.com/consumer-cancel.html
+                delete this.qpsExchange._consumerTags[`${QUEUE_PREFIX}_${qpsKey}`]
+                return
+            }
+            await this.qpsExchange.setPrefetch(qpsBatchSize) //make sure we can handle the batch size
+            this.batchList.push(msg)
+
+            // Send the batch if it is full
+            if(this.batchList.length >= qpsBatchSize) {
+                await this.send(headers)
+            }
+
+            // After X seconds, send the batch even if it isn't full
+            else if(this.batchStartTimeoutId === null){
+                this.batchStartTimeoutId = setTimeout(async ()=>{
+                    await sleepLock.acquire()
+                    try {
+                        await this.send(headers)
+                    }
+                    finally {
+                        sleepLock.release()
+                    }
+                }, qpsBatchTimeout)
+            }
+        }
+        finally {
+            sleepLock.release()
+        }
+    }
+}
 
 class QpsExchange extends EventEmitter {
     constructor({rabbitConnString, managementConnString}){
@@ -172,69 +236,9 @@ class QpsExchange extends EventEmitter {
      * @param {*} qpsKey The `qps-key` to shovel messages for
      */
     async consumeQpsQueue(qpsKey){
-        if(this._consumerTags[`${QUEUE_PREFIX}_${qpsKey}`]) return this._consumerTags[`${QUEUE_PREFIX}_${qpsKey}`]
-        var batchList = []
-        var batchStartTimeoutId = null
-        var qpsDelay, qpsBatchSize, qpsBatchTimeout, qpsBatchCombine, qpsDelayLockKey
-        async function sendFunc() {
-            if(batchList.length == 0) return
-            //XXX: forwarding to a queue that does not exist borks the channel!
-            //send the message to the default exchange / intended queue
-            if(qpsBatchCombine && batchList.length > 1){
-                var content = joinBuffersWithNewLines(batchList.map(msg=>msg.content))
-                await this._forwardMessage(batchList[0], null, content)
-            } else {
-                await Promise.all(batchList.map(msg=>this._forwardMessage(msg)))
-            }
-            await Promise.all(batchList.map(msg=>this.ch.ack(msg)))
-            await sleep(qpsDelay)
-            batchList.splice(0) //clear list
-            clearTimeout(batchStartTimeoutId) //clear timeout so we don't resend the batch
-            batchStartTimeoutId = null
-        }
-        sendFunc = sendFunc.bind(this)
-
-        var sleepLock
-        async function consume(msg){
-            ({qpsDelay, qpsBatchSize, qpsBatchTimeout, qpsBatchCombine, qpsDelayLockKey} = parseHeaders(msg))
-            qpsDelayLockKey = qpsDelayLockKey || qpsKey
-            sleepLock = this.globalSleepLocks[qpsDelayLockKey] || (this.globalSleepLocks[qpsDelayLockKey] = new Lock())
-
-            await sleepLock.acquire()
-            try {
-                if(msg == null){
-                    //rabbit has canceled us http://www.rabbitmq.com/consumer-cancel.html
-                    delete this._consumerTags[`${QUEUE_PREFIX}_${qpsKey}`]
-                    return
-                }
-                await this.setPrefetch(qpsBatchSize) //make sure we can handle the batch size
-                batchList.push(msg)
-
-                // Send the batch if it is full
-                if(batchList.length >= qpsBatchSize) {
-                    await sendFunc()
-                }
-
-                // After X seconds, send the batch even if it isn't full
-                else if(batchStartTimeoutId === null){
-                    batchStartTimeoutId = setTimeout(async ()=>{
-                        await sleepLock.acquire()
-                        try {
-                            await sendFunc()
-                        }
-                        finally {
-                            sleepLock.release()
-                        }
-                    }, qpsBatchTimeout)
-                }
-            }
-            finally {
-                sleepLock.release()
-            }
-        }
-        consume = consume.bind(this)
         this.emit('consume', `${QUEUE_PREFIX}_${qpsKey}`)
-        var consumerTagPromise = this.ch.consume(`${QUEUE_PREFIX}_${qpsKey}`, consume).then(r=>r.consumerTag)
+        var consumer = new QpsExchangeConsumer(this)
+        var consumerTagPromise = this.ch.consume(`${QUEUE_PREFIX}_${qpsKey}`, consumer.consume.bind(consumer)).then(r=>r.consumerTag)
         this._consumerTags[`${QUEUE_PREFIX}_${qpsKey}`] = consumerTagPromise //NOTE: We can not yield before we set this key or we will create multiple consumers
         await this.ch.bindQueue(`${QUEUE_PREFIX}_${qpsKey}`, 'qps_exchange', '', {'qps-key':qpsKey})
         return await consumerTagPromise //can be used to cancel the consume
