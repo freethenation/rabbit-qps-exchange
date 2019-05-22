@@ -85,7 +85,7 @@ class QpsExchange extends EventEmitter {
         this.conn = null //rabbit connection
         this.ch = null //rabbit channel
         this.prefetch = 1
-        this.globalSleepLocks = {}
+        this.globalSleepLocks = {} //map from lock name (often qps-key) to the lock that should be acquired to send msg
     }
     async _forwardMessage(msg, exchange, content){
         await this.ch.publish(exchange||'', msg.fields.routingKey, content||msg.content, {
@@ -264,7 +264,6 @@ class QpsExchange extends EventEmitter {
     }
     /**
      * Delete any queues that have not been used recently
-     * @param {*} maxIdleDuration If a queue has been for this duration (in milliseconds) it will be deleted. The default is 1hr
      */
     async deleteIdleQueues(){
         var idleQueues = (await listQueues(this.managementConnString, `^${QUEUE_PREFIX}_`))
