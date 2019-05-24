@@ -52,10 +52,12 @@ function parseHeaders(msg){
         qpsKey: msg.properties.headers && msg.properties.headers['qps-key'] || null,
         qpsDelay: msg.properties.headers && msg.properties.headers['qps-delay'] || 1000,
         qpsMaxPriority: qpsMaxPriority,
+        qpsDurable: !!msg.properties.headers['qps-durable'],
         qpsBatchSize: msg.properties.headers['qps-batch-size'] || 1,
         qpsBatchTimeout: msg.properties.headers['qps-batch-timeout'] || 1000,
         qpsBatchCombine: msg.properties.headers['qps-batch-combine'] || false,
         qpsDelayLockKey: msg.properties.headers['qps-delay-lock-key'] || null,
+        qpsCubicMaxQps: msg.properties.headers['qps-cubic-max-qps'] || null
     }
 }
 
@@ -75,7 +77,57 @@ function sleep(milliseconds){
 }
 module.exports.sleep = sleep
 
-class QpsExchangeConsumer {
+//interface IExchangeConsumer { consume(msg:RabbitMessage):Promise<void> }
+const CUBIC_SCALING_CONSTANT = .000001
+const CUBIC_MULTIPLICATION_DECREASE_FACTOR = .5 //On error half the load
+class CubicExchangeConsumer /* implements IExchangeConsumer */ {
+    //See http://squidarth.com/rc/programming/networking/2018/07/18/intro-congestion.html & https://en.wikipedia.org/wiki/CUBIC_TCP for more info about this class
+    constructor(qpsExchange){
+        this.qpsExchange = qpsExchange
+        this.qps = 1 // current qps aka cwnd aka congestion window (in orig alg)
+        this.time = 0 //time in MS elapsed since the last window reduction
+        this.lastQps = 0 //qps just before last reduction aka wmax (in orig alg)
+        this.qpsKey = null
+        this.qpsExchange.on('nack', this.onNack.bind(this))
+    }
+    onNack(msg){
+        if(time < 1000) return //ignore nacks in short succession
+        if(parseHeaders(msg).qpsKey !== this.qpsKey) return
+        this.reduction()
+    }
+    tickTime(maxQps){
+        //Below is formula form wikipedia page.
+        // * Constants were tweaked using seconds (hence we convert to seconds in formula)
+        // * qps/cwnd really has to be bigger than 1 so we scale by 10 so we can do .1 qps (*10 in formula)
+        this.qps = this.lastQps + CUBIC_SCALING_CONSTANT*Math.pow((this.time/1000)-Math.pow(CUBIC_MULTIPLICATION_DECREASE_FACTOR*this.lastQps*10/CUBIC_SCALING_CONSTANT, 1.0/3.0), 3)
+        if(maxQps && this.qps>maxQps) this.qps = maxQps
+        this.time += 1000.0/this.qps //we don't use real time so that we can handle spiky traffic
+    }
+    reduction(){
+        this.lastQps = this.qps
+        this.time = 0
+        this.tickTime()
+        this.time = 0
+    }
+    async consume(msg) {
+        var headers = parseHeaders(msg)
+        var {qpsCubicMaxQps, qpsDelayLockKey, qpsKey} = headers
+        this.qpsKey = this.qpsKey || qpsKey
+        qpsDelayLockKey = qpsDelayLockKey || qpsKey
+        var sleepLock = this.qpsExchange.globalSleepLocks[qpsDelayLockKey] || (this.qpsExchange.globalSleepLocks[qpsDelayLockKey] = new Lock())
+        await sleepLock.acquire()
+        try {
+            msg.properties.headers['qps-cubic-current-qps'] = this.qps
+            await this.qpsExchange._forwardMessage(msg)
+            await sleep(1000/this.qps)
+            this.tickTime(qpsCubicMaxQps)
+        } finally {
+            sleepLock.release()
+        }
+    }
+}
+
+class QpsExchangeConsumer /* implements IExchangeConsumer */ {
     constructor(qpsExchange){
         this.qpsExchange = qpsExchange
         this.batchList = []
@@ -196,6 +248,12 @@ class QpsExchange extends EventEmitter {
         await this.ch.bindQueue('qps_unknown_queue', 'qps_unknown_exchange', '#') //routes all messages to the 'qps_unknown_queue'
         await this.ch.assertExchange('qps_exchange', 'headers', {durable:true, alternateExchange:'qps_unknown_exchange'}) //The first time we see a qps-key it is routed to the QPS_UNKNOWN_EXCHANGE via alternateExchange
     }
+    async initAndConsumeNackQueue(){
+        if(this._consumerTags['qps_nack_queue']) return this._consumerTags['qps_nack_queue']
+        await this.ch.assertQueue('qps_nack_queue', {maxLength:MAX_LENGTH})
+        this._consumerTags['qps_nack_queue'] = this.ch.consume('qps_nack_queue',  this.emit.bind(this, 'nack')).then(r=>r.consumerTag)
+        return this._consumerTags['qps_nack_queue']
+    }
     /**
      * Start a consumer for any unknown 'qps-key'
      */
@@ -207,7 +265,8 @@ class QpsExchange extends EventEmitter {
                 delete this._consumerTags['qps_unknown_queue']
                 return
             }
-            var {qpsKey, qpsMaxPriority} = parseHeaders(msg)
+            var headers = parseHeaders(msg)
+            var {qpsKey, qpsMaxPriority, qpsDurable} = headers
             if(!qpsKey){
                 this.ch.nack(msg, false, false) //did not set a qpsKey which is required for this exchange
                 return
@@ -216,11 +275,11 @@ class QpsExchange extends EventEmitter {
             this.emit("assertQueue", `${QUEUE_PREFIX}_${qpsKey}`)
             let args = {
                 maxPriority:qpsMaxPriority,
-                durable:(qpsKey.indexOf('listing-') !== -1),
+                durable:qpsDurable,
                 maxLength:MAX_LENGTH
             }
             await this.ch.assertQueue(`${QUEUE_PREFIX}_${qpsKey}`, args) //XXX: messages with the same qpsKey and diff maxPriority WILL bork the channel
-            await this.consumeQpsQueue(qpsKey) //start a consumer of the queue if there is not one
+            await this.consumeQpsQueue(headers) //start a consumer of the queue if there is not one
             //forward the message back through the qps_exchange which should hit the binding we just created
             await this._forwardMessage(msg, 'qps_exchange')
             await this.ch.ack(msg)
@@ -230,14 +289,20 @@ class QpsExchange extends EventEmitter {
         this._consumerTags['qps_unknown_queue'] = consumerTagPromise
         return await consumerTagPromise //can be used to cancel the consume
     }
-
     /**
      * Starts a consumer that shovels all message for a given `qps-key`. The consumer will respect the `qps-delay` header
      * @param {*} qpsKey The `qps-key` to shovel messages for
      */
-    async consumeQpsQueue(qpsKey){
+    async consumeQpsQueue(headers){
+        var {qpsKey, qpsCubicMaxQps} = headers
+        if(this._consumerTags[`${QUEUE_PREFIX}_${qpsKey}`]) return this._consumerTags[`${QUEUE_PREFIX}_${qpsKey}`]
         this.emit('consume', `${QUEUE_PREFIX}_${qpsKey}`)
-        var consumer = new QpsExchangeConsumer(this)
+        if(qpsCubicMaxQps){
+            await this.initAndConsumeNackQueue()
+            var consumer = new CubicExchangeConsumer(this)
+        } else {
+            var consumer = new QpsExchangeConsumer(this)
+        }
         var consumerTagPromise = this.ch.consume(`${QUEUE_PREFIX}_${qpsKey}`, consumer.consume.bind(consumer)).then(r=>r.consumerTag)
         this._consumerTags[`${QUEUE_PREFIX}_${qpsKey}`] = consumerTagPromise //NOTE: We can not yield before we set this key or we will create multiple consumers
         await this.ch.bindQueue(`${QUEUE_PREFIX}_${qpsKey}`, 'qps_exchange', '', {'qps-key':qpsKey})
