@@ -46,11 +46,11 @@ module.exports.listQueues = listQueues
 
 /** Given a message this function parses all relevant headers  */
 function parseHeaders(msg){
-    var qpsMaxPriority = parseInt(msg.properties.headers && msg.properties.headers['qps-max-priority']) //needs to be an int not a float
+    var qpsMaxPriority = parseInt(msg.properties.headers['qps-max-priority']) //needs to be an int not a float
     qpsMaxPriority = isNaN(qpsMaxPriority) ? undefined : qpsMaxPriority
     return {
-        qpsKey: msg.properties.headers && msg.properties.headers['qps-key'] || null,
-        qpsDelay: msg.properties.headers && msg.properties.headers['qps-delay'] || 1000,
+        qpsKey: msg.properties.headers['qps-key'] || null,
+        qpsDelay: msg.properties.headers['qps-delay'] || 1000,
         qpsMaxPriority: qpsMaxPriority,
         qpsDurable: !!msg.properties.headers['qps-durable'],
         qpsBatchSize: msg.properties.headers['qps-batch-size'] || 1,
