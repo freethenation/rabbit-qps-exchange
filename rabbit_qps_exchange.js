@@ -279,7 +279,7 @@ class QpsExchange extends EventEmitter {
                 maxLength:MAX_LENGTH
             }
             await this.ch.assertQueue(`${QUEUE_PREFIX}_${qpsKey}`, args) //XXX: messages with the same qpsKey and diff maxPriority WILL bork the channel
-            await this.consumeQpsQueue(headers.qpsKey) //start a consumer of the queue if there is not one
+            await this.consumeQpsQueue(qpsKey) //start a consumer of the queue if there is not one
             //forward the message back through the qps_exchange which should hit the binding we just created
             await this._forwardMessage(msg, 'qps_exchange')
             await this.ch.ack(msg)
@@ -297,7 +297,7 @@ class QpsExchange extends EventEmitter {
         if(this._consumerTags[`${QUEUE_PREFIX}_${qpsKey}`]) return this._consumerTags[`${QUEUE_PREFIX}_${qpsKey}`]
         this.emit('consume', `${QUEUE_PREFIX}_${qpsKey}`)
         var consumer;
-        var consumerTagPromise = this.ch.consume(`${QUEUE_PREFIX}_${qpsKey}`, function(msg){
+        var consumerTagPromise = this.ch.consume(`${QUEUE_PREFIX}_${qpsKey}`, async (msg)=>{
             if(consumer) return consumer.consume(msg)
             //based on the qpsKey alone we don't know what type of consumer to create until we get a message
             var headers = parseHeaders(msg)
