@@ -72,7 +72,7 @@ describe('QpsExchange', function() {
         await ch.assertQueue('destination_test1', {durable:false})
         //init the exchange
         await exchange.initExchanges()
-        await exchange.consumeQpsQueue({qpsKey:'test1'}) //create binding for qps_key_test1 created above
+        await exchange.consumeQpsQueue('test1') //create binding for qps_key_test1 created above
         var publishTime = +(new Date())
         await ch.publish('qps_exchange', 'destination_test1', new Buffer('content'), {
             headers:{'qps-key':'test1','qps-delay':'1000'}
@@ -263,7 +263,7 @@ describe('QpsExchange', function() {
         })
         await sleep(250) //wait for messages to be published
         //restart consumer
-        await exchange.consumeQpsQueue({qpsKey:'test1'})
+        await exchange.consumeQpsQueue('test1')
 
         //read the messages and assert stuff
         var [_, msg1, msg2] = await receiveXMessages(ch, 'destination_test1', 3)

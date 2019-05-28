@@ -279,7 +279,7 @@ class QpsExchange extends EventEmitter {
                 maxLength:MAX_LENGTH
             }
             await this.ch.assertQueue(`${QUEUE_PREFIX}_${qpsKey}`, args) //XXX: messages with the same qpsKey and diff maxPriority WILL bork the channel
-            await this.consumeQpsQueue(headers) //start a consumer of the queue if there is not one
+            await this.consumeQpsQueue(headers.qpsKey) //start a consumer of the queue if there is not one
             //forward the message back through the qps_exchange which should hit the binding we just created
             await this._forwardMessage(msg, 'qps_exchange')
             await this.ch.ack(msg)
@@ -293,17 +293,22 @@ class QpsExchange extends EventEmitter {
      * Starts a consumer that shovels all message for a given `qps-key`. The consumer will respect the `qps-delay` header
      * @param {*} qpsKey The `qps-key` to shovel messages for
      */
-    async consumeQpsQueue(headers){
-        var {qpsKey, qpsCubicMaxQps} = headers
+    async consumeQpsQueue(qpsKey){
         if(this._consumerTags[`${QUEUE_PREFIX}_${qpsKey}`]) return this._consumerTags[`${QUEUE_PREFIX}_${qpsKey}`]
         this.emit('consume', `${QUEUE_PREFIX}_${qpsKey}`)
-        if(qpsCubicMaxQps){
-            await this.initAndConsumeNackQueue()
-            var consumer = new CubicExchangeConsumer(this)
-        } else {
-            var consumer = new QpsExchangeConsumer(this)
-        }
-        var consumerTagPromise = this.ch.consume(`${QUEUE_PREFIX}_${qpsKey}`, consumer.consume.bind(consumer)).then(r=>r.consumerTag)
+        var consumer;
+        var consumerTagPromise = this.ch.consume(`${QUEUE_PREFIX}_${qpsKey}`, function(msg){
+            if(consumer) return consumer.consume(msg)
+            //based on the qpsKey alone we don't know what type of consumer to create until we get a message
+            var headers = parseHeaders(msg)
+            if(headers.qpsCubicMaxQps){
+                await this.initAndConsumeNackQueue()
+                consumer = new CubicExchangeConsumer(this)
+            } else {
+                consumer = new QpsExchangeConsumer(this)
+            }
+            return consumer.consume(msg)
+        }).then(r=>r.consumerTag)
         this._consumerTags[`${QUEUE_PREFIX}_${qpsKey}`] = consumerTagPromise //NOTE: We can not yield before we set this key or we will create multiple consumers
         await this.ch.bindQueue(`${QUEUE_PREFIX}_${qpsKey}`, 'qps_exchange', '', {'qps-key':qpsKey})
         return await consumerTagPromise //can be used to cancel the consume
