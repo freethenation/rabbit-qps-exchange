@@ -1,7 +1,41 @@
 @startuml
-Alice -> Bob: Authentication Request
-Bob --> Alice: Authentication Response
+title
+ <u>CUBIC TCP rate limiting example/usage</u>
+ To use the CUBIC TCP rate limiting algorithm publish to qps_exchange with the   <i>qps-cubic-max-qps</i> header
+ Report any errors by publishing to the  <i>qps_nack_queue</i> to trigger a reduction in the CUBIC algorithm
+end title
+footer
+ It is assumed that the <i>consumer queue</i> is always empty otherwise the rate limiting will have no effect as consumers
+ will simply be consuming from the backlog in the     <i>consumer queue</i>.
+end footer
+participant "producer/app" as producer
+participant qps_exchange
+participant "consumer queue" as consumer_queue
+participant "consumer/app" as consumer
 
-Alice -> Bob: Another authentication Request
-Alice <-- Bob: Another authentication Response
+producer -> qps_exchange: publishes message #1\nwith  **qps-cubic-max-qps** &\n**qps-key** headers
+qps_exchange->consumer_queue: publish for consumption\nusing routing key
+qps_exchange->qps_exchange: begin sleep according to\nCUBIC window size
+activate qps_exchange
+consumer_queue->consumer: consume message
+consumer->consumer: do work
+activate consumer
+producer -> qps_exchange: publish message #2
+
+alt work successful
+	consumer --> consumer_queue: ack rabbitmq message
+else work failure
+    consumer --> consumer_queue: nack rabbitmq message
+    consumer--> qps_exchange: publish a nack message to the\n**qps_nack_queue** queue with same\n**qps-key** header to trigger a reduction\nin CUBIC algorithm
+end
+deactivate consumer
+
+producer -> qps_exchange: publish message #...
+qps_exchange->consumer_queue: publish for consumption\nusing routing key
+deactivate qps_exchange
+qps_exchange->qps_exchange: begin sleep according to\nCUBIC window size
+activate qps_exchange
+consumer_queue->consumer: consume message
+consumer->consumer: do work
+activate consumer
 @enduml
