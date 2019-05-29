@@ -81,6 +81,33 @@ describe('QpsExchange', function() {
         })
     })
 
+    it('should use the cubic algorithm successfully', async function(){
+        var ch = exchange.ch
+        await ch.assertQueue(`qps_key_test1`, {durable:false})
+        await ch.assertQueue('destination_test1', {durable:false})
+        //init the exchange
+        await exchange.initExchanges()
+        await exchange.consumeQpsQueue('test1') //create binding for qps_key_test1 created above
+        var publishTime = +(new Date())
+        for (let index = 0; index < 5; index++) {
+            await ch.publish('qps_exchange', 'destination_test1', new Buffer('content'), {
+                headers:{'qps-key':'test1','qps-cubic-max-qps':10000000, 'qps-cubic-max-qps-time':10}
+            })
+        }
+        //check to see if message ended up in the correct place
+        var msgs = await receiveXMessages(ch, 'destination_test1', 5)
+        var lastQps = -1
+        for (const msg of msgs) {
+            assert.equal(msg.properties.headers['qps-key'], 'test1') //assert headers are preserved
+            assert.equal(msg.content.toString(), 'content') //assert content is preserved
+            let currentQps = msg.properties.headers['qps-cubic-current-qps']
+            console.info(`current qps-cubic-current-qps is ${currentQps}`)
+            assert.ok(typeof(currentQps)==="number", 'message did not go to correct exchange') //assert headers are preserved
+            assert.ok(currentQps>lastQps, 'qps should increase after every successful message')
+            lastQps=currentQps
+        }
+    })
+
     it('should end up in the correct queue', async function(){
         var ch = exchange.ch
         await ch.assertQueue(`qps_key_test1`, {durable:false})

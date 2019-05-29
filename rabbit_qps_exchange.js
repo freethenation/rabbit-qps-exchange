@@ -108,7 +108,7 @@ class CubicExchangeConsumer /* implements IExchangeConsumer */ {
         this.qps = this.scalingFactor*Math.pow((this.time/1000)-K, 3) + wmax //Constants were tweaked using seconds (hence we convert to seconds in formula)
         if(this.qps < .1) this.qps = 0.1 //min usable in formula
         else if(maxQps && this.qps>maxQps) this.qps = maxQps //enforce max qps option
-        this.time += 1000.0/this.qps //we don't use real time so that we can handle spiky traffic
+        this.time += Math.max(1000.0/this.qps,1) //we don't use real time so that we can handle spiky traffic
     }
     reduction(){
         this.lastQps = this.qps
@@ -124,9 +124,9 @@ class CubicExchangeConsumer /* implements IExchangeConsumer */ {
         var sleepLock = this.qpsExchange.globalSleepLocks[qpsDelayLockKey] || (this.qpsExchange.globalSleepLocks[qpsDelayLockKey] = new Lock())
         await sleepLock.acquire()
         try {
+            this.tickTime(qpsCubicMaxQps, qpsCubicMaxQpsTime)
             msg.properties.headers['qps-cubic-current-qps'] = this.qps
             await this.qpsExchange._forwardMessage(msg)
-            this.tickTime(qpsCubicMaxQps, qpsCubicMaxQpsTime)
             await sleep(1000/this.qps)
         } finally {
             sleepLock.release()
@@ -310,8 +310,8 @@ class QpsExchange extends EventEmitter {
             //based on the qpsKey alone we don't know what type of consumer to create until we get a message
             var headers = parseHeaders(msg)
             if(headers.qpsCubicMaxQps){
-                await this.initAndConsumeNackQueue()
                 consumer = new CubicExchangeConsumer(this)
+                await this.initAndConsumeNackQueue()
             } else {
                 consumer = new QpsExchangeConsumer(this)
             }
