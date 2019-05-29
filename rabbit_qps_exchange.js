@@ -305,13 +305,13 @@ class QpsExchange extends EventEmitter {
         if(this._consumerTags[`${QUEUE_PREFIX}_${qpsKey}`]) return this._consumerTags[`${QUEUE_PREFIX}_${qpsKey}`]
         this.emit('consume', `${QUEUE_PREFIX}_${qpsKey}`)
         var consumer;
-        var consumerTagPromise = this.ch.consume(`${QUEUE_PREFIX}_${qpsKey}`, async (msg)=>{
+        var consumerTagPromise = this.ch.consume(`${QUEUE_PREFIX}_${qpsKey}`, (msg)=>{
             if(consumer) return consumer.consume(msg)
             //based on the qpsKey alone we don't know what type of consumer to create until we get a message
             var headers = parseHeaders(msg)
             if(headers.qpsCubicMaxQps){
                 consumer = new CubicExchangeConsumer(this)
-                await this.initAndConsumeNackQueue()
+                this.initAndConsumeNackQueue() //async
             } else {
                 consumer = new QpsExchangeConsumer(this)
             }
