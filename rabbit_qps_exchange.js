@@ -57,7 +57,8 @@ function parseHeaders(msg){
         qpsBatchTimeout: msg.properties.headers['qps-batch-timeout'] || 1000,
         qpsBatchCombine: msg.properties.headers['qps-batch-combine'] || false,
         qpsDelayLockKey: msg.properties.headers['qps-delay-lock-key'] || null,
-        qpsCubicMaxQps: msg.properties.headers['qps-cubic-max-qps'] || null
+        qpsCubicMaxQps: msg.properties.headers['qps-cubic-max-qps'] || null,
+        qpsCubicMaxQpsTime: msg.properties.headers['qps-cubic-max-qps-time'] || 10*60*1000, //default to 10 min
     }
 }
 
@@ -78,40 +79,46 @@ function sleep(milliseconds){
 module.exports.sleep = sleep
 
 //interface IExchangeConsumer { consume(msg:RabbitMessage):Promise<void> }
-const CUBIC_SCALING_CONSTANT = .000001
 const CUBIC_MULTIPLICATION_DECREASE_FACTOR = .5 //On error half the load
+module.exports.CUBIC_MULTIPLICATION_DECREASE_FACTOR = CUBIC_MULTIPLICATION_DECREASE_FACTOR
 class CubicExchangeConsumer /* implements IExchangeConsumer */ {
     //See http://squidarth.com/rc/programming/networking/2018/07/18/intro-congestion.html & https://en.wikipedia.org/wiki/CUBIC_TCP for more info about this class
     constructor(qpsExchange){
         this.qpsExchange = qpsExchange
-        this.qps = 1 // current qps aka cwnd aka congestion window (in orig alg)
-        this.time = 0 //time in MS elapsed since the last window reduction
+        this.qps = 0 // current qps aka cwnd aka congestion window (in orig alg)
+        this.time = 1 //time in MS elapsed since the last window reduction
         this.lastQps = 0 //qps just before last reduction aka wmax (in orig alg)
         this.qpsKey = null
         this.qpsExchange.on('nack', this.onNack.bind(this))
+        this.scalingFactor = null//cubic scaling factor
     }
     onNack(msg){
         if(time < 1000) return //ignore nacks in short succession
         if(parseHeaders(msg).qpsKey !== this.qpsKey) return
         this.reduction()
     }
-    tickTime(maxQps){
-        //Below is formula form wikipedia page.
-        // * Constants were tweaked using seconds (hence we convert to seconds in formula)
-        // * qps/cwnd really has to be bigger than 1 so we scale by 10 so we can do .1 qps (*10 in formula)
-        this.qps = this.lastQps + CUBIC_SCALING_CONSTANT*Math.pow((this.time/1000)-Math.pow(CUBIC_MULTIPLICATION_DECREASE_FACTOR*this.lastQps*10/CUBIC_SCALING_CONSTANT, 1.0/3.0), 3)
-        if(maxQps && this.qps>maxQps) this.qps = maxQps
+    tickTime(maxQps, maxQpsTime){
+        //This function uses the formula from the wikipedia page, https://en.wikipedia.org/wiki/CUBIC_TCP , with a few tweaks
+        if(maxQps && maxQpsTime){
+            this.scalingFactor = maxQps/Math.pow(maxQpsTime/1000,3.0) //tweak the cubic scaling factor depending on how fast we want to scale up
+        }
+        //start of actual formula
+        var wmax = this.lastQps*10 //qps/cwnd really has to be bigger than 1 so we scale by 10 so we can do .1 qps (*10 in formula)
+        var K = Math.cbrt(CUBIC_MULTIPLICATION_DECREASE_FACTOR*wmax/this.scalingFactor)
+        this.qps = this.scalingFactor*Math.pow((this.time/1000)-K, 3) + wmax //Constants were tweaked using seconds (hence we convert to seconds in formula)
+        if(this.qps < .1) this.qps = 0.1 //min usable in formula
+        else if(maxQps && this.qps>maxQps) this.qps = maxQps //enforce max qps option
         this.time += 1000.0/this.qps //we don't use real time so that we can handle spiky traffic
     }
     reduction(){
         this.lastQps = this.qps
-        this.time = 0
+        this.time = 1
         this.tickTime()
-        this.time = 0
+        this.time = 1
     }
     async consume(msg) {
         var headers = parseHeaders(msg)
-        var {qpsCubicMaxQps, qpsDelayLockKey, qpsKey} = headers
+        var {qpsCubicMaxQps, qpsDelayLockKey, qpsKey, qpsCubicMaxQpsTime} = headers
         this.qpsKey = this.qpsKey || qpsKey
         qpsDelayLockKey = qpsDelayLockKey || qpsKey
         var sleepLock = this.qpsExchange.globalSleepLocks[qpsDelayLockKey] || (this.qpsExchange.globalSleepLocks[qpsDelayLockKey] = new Lock())
@@ -119,13 +126,14 @@ class CubicExchangeConsumer /* implements IExchangeConsumer */ {
         try {
             msg.properties.headers['qps-cubic-current-qps'] = this.qps
             await this.qpsExchange._forwardMessage(msg)
+            this.tickTime(qpsCubicMaxQps, qpsCubicMaxQpsTime)
             await sleep(1000/this.qps)
-            this.tickTime(qpsCubicMaxQps)
         } finally {
             sleepLock.release()
         }
     }
 }
+module.exports.CubicExchangeConsumer = CubicExchangeConsumer
 
 class QpsExchangeConsumer /* implements IExchangeConsumer */ {
     constructor(qpsExchange){

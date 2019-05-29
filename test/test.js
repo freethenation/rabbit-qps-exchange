@@ -1,5 +1,6 @@
 var assert = require('assert')
-var {QpsExchange, sleep, listQueues, main} = require('../rabbit_qps_exchange')
+var {QpsExchange, sleep, main, CubicExchangeConsumer, CUBIC_MULTIPLICATION_DECREASE_FACTOR} = require('../rabbit_qps_exchange')
+const EventEmitter = require('events');
 
 var rabbitConnString = process.env.rabbitConnString || "amqp://localhost"
 var managementConnString = process.env.managementConnString || "http://guest:guest@localhost:15672/"
@@ -36,6 +37,20 @@ describe('QpsExchange', function() {
 
     it('should connect', async function() {
         //await exchange.connect() //done in beforeEach
+    })
+
+    it('should follow the CUBIC TCP alg', function(){
+        var consumer = new CubicExchangeConsumer(new EventEmitter())
+        while(consumer.qps < 10){
+            //console.log("consumer.time", parseInt(consumer.time/1000), "qps", consumer.qps)
+            consumer.tickTime(10, 10*60*1000)
+        }
+        assert.equal(consumer.qps, 10.0, "maxQps not respected")
+        assert.equal(Math.round(consumer.time/1000), 10*60, "maxQpsTime wrong")
+        consumer.reduction()
+        assert.ok(consumer.time<10, "time was not reset")
+        assert.ok(consumer.qps, CUBIC_MULTIPLICATION_DECREASE_FACTOR*10, "did not decrease by correct amount")
+        assert.ok(consumer.lastQps, 10, "lastQps not updated")
     })
 
     it('should init exchanges', async function(){
