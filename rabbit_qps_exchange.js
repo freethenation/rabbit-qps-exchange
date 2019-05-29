@@ -99,16 +99,15 @@ class CubicExchangeConsumer /* implements IExchangeConsumer */ {
     }
     tickTime(maxQps, maxQpsTime){
         //This function uses the formula from the wikipedia page, https://en.wikipedia.org/wiki/CUBIC_TCP , with a few tweaks
-        if(maxQps && maxQpsTime){
+        if(maxQps && maxQpsTime)
             this.scalingFactor = maxQps/Math.pow(maxQpsTime/1000,3.0) //tweak the cubic scaling factor depending on how fast we want to scale up
-        }
         //start of actual formula
         var wmax = this.lastQps*10 //qps/cwnd really has to be bigger than 1 so we scale by 10 so we can do .1 qps (*10 in formula)
         var K = Math.cbrt(CUBIC_MULTIPLICATION_DECREASE_FACTOR*wmax/this.scalingFactor)
         this.qps = this.scalingFactor*Math.pow((this.time/1000)-K, 3) + wmax //Constants were tweaked using seconds (hence we convert to seconds in formula)
         if(this.qps < .1) this.qps = 0.1 //min usable in formula
         else if(maxQps && this.qps>maxQps) this.qps = maxQps //enforce max qps option
-        this.time += Math.max(1000.0/this.qps,1) //we don't use real time so that we can handle spiky traffic
+        this.time += Math.max(1000.0/this.qps,1) //we don't use real time so that we can handle spiky traffic XXX:think about this more
     }
     reduction(){
         this.qpsExchange.emit("cubicQpsReduction", {qps:this.qps, time:this.time, scalingFactor:this.scalingFactor})
