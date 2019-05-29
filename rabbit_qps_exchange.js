@@ -111,6 +111,7 @@ class CubicExchangeConsumer /* implements IExchangeConsumer */ {
         this.time += Math.max(1000.0/this.qps,1) //we don't use real time so that we can handle spiky traffic
     }
     reduction(){
+        this.qpsExchange.emit("cubicQpsReduction", {qps:this.qps, time:this.time, scalingFactor:this.scalingFactor})
         this.lastQps = this.qps
         this.time = 1
         this.tickTime()
@@ -392,6 +393,7 @@ async function main(argv){
     exchange.on('consume', log.bind(null, 'consume'))
     exchange.on('deleteQueue', log.bind(null, 'deleteQueue'))
     exchange.on('assertQueue', log.bind(null, 'assertQueue'))
+    exchange.on('cubicQpsReduction', log.bind(null, 'cubicQpsReduction'))
     log('connecting to rabbit...')
     await exchange.connect()
     function handleRabbitError(){
