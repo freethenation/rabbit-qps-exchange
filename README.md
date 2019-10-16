@@ -55,7 +55,7 @@ options:
 ### Internal Queues
 
 Rabbit QPS Exchange automatically creates and deletes queues as required and the diagram below exemplifies their organization
-![Rabbit QPS Exchange internal organization](https://raw.githubusercontent.com/thingless/rabbit-qps-exchange/master/internal_queue_diagram.svg)
+![Rabbit QPS Exchange internal organization](https://raw.githubusercontent.com/thingless/rabbit-qps-exchange/master/internal_queue_diagram.png)
 
 ## Running Tests
 * Run a rabbitmq server
