@@ -1,13 +1,13 @@
 # Rabbit QPS Exchange
 
-Rabbit has no built in mechanism to limit the number of messages consumed per second. If a burst of messages are published workers can quickly overload other internal or external services. This project is a simple node.js script which adds a way to limit consumption to rabbit.
+Rabbit has no built in mechanism to limit the number of messages consumed per second. If a burst of messages are published, workers can quickly overload other internal or external services. This project is a simple node.js script which adds a way to limit consumption to rabbit.
 
 Some example use cases:
 
 * Limit calls to an external service which limits QPS (queries per second)
 * Rate limit individual users without having to manage a queue per user. *Rabbit QPS Exchange will manage these queues for you.*
-* Easier rate limiting for 3rd party API's which are often rate limit on a per user basis.
-* Batch together messages for database performance or API's which provide batch operations.
+* Easier rate limiting for 3rd party APIs which are often rate limit on a per user basis.
+* Batch together messages for database performance or APIs which provide batch operations.
 * Easily add rate limiting to an existing project. Simply publish to a different exchange and add a few rabbit message headers.
 
 ## Basic Usage
@@ -20,7 +20,7 @@ Some example use cases:
 
 ## Installing
 * The rabbit server version must be > 3.5.0
-* The rabbit server must have the management plugin installed (it's http interface is used)
+* The rabbit server must have the management plugin installed (its http interface is used)
 * Install a modern version of node (async support is required)
 * Run `npm install`
 
