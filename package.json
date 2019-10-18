@@ -1,11 +1,12 @@
 {
-  "name": "rabbit_qps_shovel",
+  "name": "rabbit-qps-exchange",
   "version": "1.0.0",
   "description": "",
   "main": "rabbit_qps_exchange.js",
   "scripts": {
     "test": "./node_modules/.bin/mocha --exit"
   },
+  "bin": "./rabbit_qps_exchange.js",
   "author": "",
   "license": "ISC",
   "dependencies": {
