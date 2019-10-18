@@ -62,5 +62,5 @@ Rabbit QPS Exchange automatically creates and deletes queues as required and the
 * Run a rabbitmq server
 * The rabbit server must have the management plugin installed
 * Run tests with `npm test`
-* The environment variables `rabbitConnString` and `managementConnString` can be used to provide connection information
+* The environment variables `RABBIT_CONN_STRING` and `MANAGEMENT_CONN_STRING` can be used to provide connection information
 
