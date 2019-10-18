@@ -8,7 +8,7 @@ const NEWLINE_BUFFER = Buffer.from('\n')
 
 function showHelp(){
     console.error(`
-Creates and maintains a rabbit exchange, 'qps_exchange', which when published to enforces a QPS across queues using parameters provided via rabbit message headers.
+Creates and maintains a rabbit exchange, 'qps_exchange', which when published to limits worker consumption using parameters provided via rabbit message headers.
 See README.md for more usage details
 
 Usage: ./rabbit_qps_shovel.js [OPTIONS] COMMAND
@@ -300,6 +300,8 @@ async function main(argv){
     var log = console.error
     var command = ((argv.argv||[])[0] || 'help').toLowerCase()
     if(argv.h || argv.help || command=="help") showHelp()
+    argv.connection = argv.connection || process.env['RABBIT_CONN_STRING']
+    argv.management = argv.management || process.env['MANAGEMENT_CONN_STRING']
     if(!argv.connection){ log('Error: --connection is required\n'); showHelp() }
     if(!argv.management){ log('Error: --management is required\n'); showHelp() }
     if(['init','start','clean'].indexOf(command)==-1){ showHelp() }
@@ -312,8 +314,18 @@ async function main(argv){
     exchange.on('consume', log.bind(null, 'consume'))
     exchange.on('deleteQueue', log.bind(null, 'deleteQueue'))
     exchange.on('assertQueue', log.bind(null, 'assertQueue'))
-    log('connecting to rabbit...')
-    await exchange.connect()
+    //connect to rabbit retrying a few times
+    for (let retry = 1; retry <= 6; retry++) {
+        log(`connecting to rabbit attempt #${retry}...`)
+        try {
+            await exchange.connect();
+            log('connected to rabbit!')
+            break;
+        } catch (error) {
+            log('connecting to rabbit failed')
+            await sleep(5000)
+        }
+    }
     function handleRabbitError(){
         log('rabbit error: '+JSON.stringify(Array.from(arguments)))
         !argv.test && process.exit(1)
@@ -350,7 +362,10 @@ async function main(argv){
 module.exports.main = main //only exported for testing
 
 if (require.main === module) {
-    main(require('argh').argv)
+    main(require('argh').argv).catch(err=>{
+        console.error("error", err)
+        process.exit(1)
+    })
     /* you can queue a test message with the following commands
     $ ./rabbit_qps_exchange.js --connection "amqp://localhost" --management "http://guest:guest@localhost:15672/" start &
     $ rabbitmqadmin declare queue name=test durable=false

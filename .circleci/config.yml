@@ -1,0 +1,26 @@
+version: 2
+jobs:
+  build:
+    working_directory: /app
+    docker:
+      - image: ubuntu:18.04
+    steps:
+      - run:
+          name: Install Docker Compose
+          command: |
+            apt update && apt install -y curl git
+            curl -L https://github.com/docker/compose/releases/download/1.19.0/docker-compose-`uname -s`-`uname -m` > ~/docker-compose
+            chmod +x ~/docker-compose
+            mv ~/docker-compose /usr/local/bin/docker-compose
+      - checkout
+      - setup_remote_docker
+      - run:
+          name: Build container
+          command: |
+            docker-compose build worker
+            docker-compose pull
+      - run:
+          name: Run tests
+          command: |
+            cp circleci-docker-compose.override.yaml docker-compose.override.yaml
+            docker-compose up --exit-code-from worker

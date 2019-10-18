@@ -1,0 +1,21 @@
+version: '3.1'
+
+services:
+  rabbit:
+    image: rabbitmq:3-management
+    restart: always
+    environment:
+      RABBITMQ_DEFAULT_USER: user
+      RABBITMQ_DEFAULT_PASS: composePASSWORD
+    ports:
+      - "15673:15672"
+      - "5673:5672"
+
+  worker:
+    build: .
+    #command: bash -c "cd /opt/rabbitqpsexchange/; sleep 15; npm run test"
+    depends_on:
+      - rabbit
+    environment:
+      RABBIT_CONN_STRING: amqp://user:composePASSWORD@rabbit
+      MANAGEMENT_CONN_STRING: http://user:composePASSWORD@rabbit:15672/

@@ -1,8 +1,8 @@
 var assert = require('assert')
 var {QpsExchange, sleep, listQueues, main} = require('../rabbit_qps_exchange')
 
-var rabbitConnString = process.env['rabbitConnString'] || process.env['RABBIT_CONN_STRING'] || "amqp://localhost"
-var managementConnString = process.env['managementConnString'] || process.env['MANAGEMENT_CONN_STRING'] || "http://guest:guest@localhost:15672/"
+var rabbitConnString = process.env['RABBIT_CONN_STRING'] || "amqp://localhost"
+var managementConnString = process.env['MANAGEMENT_CONN_STRING'] || "http://guest:guest@localhost:15672/"
 
 describe('QpsExchange', function() {
     this.timeout(5000);

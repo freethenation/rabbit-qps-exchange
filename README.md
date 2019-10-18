@@ -1,4 +1,5 @@
-# Rabbit QPS Exchange
+# Rabbit QPS Exchange [![CircleCI](https://circleci.com/gh/freethenation/rabbit-qps-exchange.svg?style=svg)](https://circleci.com/gh/freethenation/rabbit-qps-exchange)
+
 
 Rabbit has no built in mechanism to limit the number of messages consumed per second. If a burst of messages are published, workers can quickly overload other internal or external services. This project is a simple node.js script which adds a way to limit consumption to rabbit.
 
