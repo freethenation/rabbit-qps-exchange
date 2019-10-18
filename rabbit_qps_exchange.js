@@ -51,10 +51,12 @@ function parseHeaders(msg){
         qpsKey: msg.properties.headers && msg.properties.headers['qps-key'] || null,
         qpsDelay: msg.properties.headers && msg.properties.headers['qps-delay'] || 1000,
         qpsMaxPriority: qpsMaxPriority,
+        qpsDurable: !!msg.properties.headers['qps-durable'], //default false
         qpsBatchSize: msg.properties.headers['qps-batch-size'] || 1,
         qpsBatchTimeout: msg.properties.headers['qps-batch-timeout'] || 1000,
-        qpsBatchCombine: msg.properties.headers['qps-batch-combine'] || false,
+        qpsBatchCombine: !!msg.properties.headers['qps-batch-combine'], //default false
         qpsDelayLockKey: msg.properties.headers['qps-delay-lock-key'] || null,
+
     }
 }
 
@@ -143,7 +145,7 @@ class QpsExchange extends EventEmitter {
                 delete this._consumerTags['qps_unknown_queue']
                 return
             }
-            var {qpsKey, qpsMaxPriority} = parseHeaders(msg)
+            var {qpsKey, qpsMaxPriority, qpsDurable} = parseHeaders(msg)
             if(!qpsKey){
                 this.ch.nack(msg, false, false) //did not set a qpsKey which is required for this exchange
                 return
@@ -152,7 +154,7 @@ class QpsExchange extends EventEmitter {
             this.emit("assertQueue", `${QUEUE_PREFIX}_${qpsKey}`)
             let args = {
                 maxPriority:qpsMaxPriority,
-                durable:(qpsKey.indexOf('listing-') !== -1),
+                durable:qpsDurable,
                 maxLength:MAX_LENGTH
             }
             await this.ch.assertQueue(`${QUEUE_PREFIX}_${qpsKey}`, args) //XXX: messages with the same qpsKey and diff maxPriority WILL bork the channel

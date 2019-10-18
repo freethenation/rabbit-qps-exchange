@@ -45,12 +45,13 @@ options:
 | Header              | Description                                                                                                                | Type      | Default         |
 |---------------------|----------------------------------------------------------------------------------------------------------------------------|-----------|-----------------|
 | qps-key             | Used to serialize all messages sent to the `qps_exchange`                                                                  | string    | (required)      |
-| qps-delay           | Delay (in milliseconds) to wait after routing the message to the default exchange. Use to approximate messages per second.                | int/float | 1000 ms         |
+| qps-delay           | Delay (in milliseconds) to wait after routing the message to the default exchange. Use to approximate messages per second. | int/float | 1000 ms         |
 | qps-max-priority    | Can be set along with normal Rabbit priority headers to allow prioritization                                               | integer   | no priority     |
-| qps-batch-size      | If set, will group this many messages together into a batch, all of which will be sent as separate messages simultaneously  | integer   | 1 (no batching) |
+| qps-durable         | If set, queues created and managed by rabbit qps exchange will be durable                                                  | boolean   | false           |
+| qps-batch-size      | If set, will group this many messages together into a batch, all of which will be sent as separate messages simultaneously | integer   | 1 (no batching) |
 | qps-batch-timeout   | Maximum time (in millisecond) to wait for a full batch                                                                     | int/float | 1000 ms         |
-| qps-batch-combine   | If set, will combine batch messages together into a single message separated with ASCII newlines (`\n`, `0x0A`)                                            | boolean   | false           |
-| qps-delay-lock-key  | Can be set to share the delay lock between multiple QPS keys. Defaults to `qps-key` if not set. (leaving as default recommended)                            | string    | `qps-key`       |
+| qps-batch-combine   | If set, will combine batch messages together into a single message separated with ASCII newlines (`\n`, `0x0A`)            | boolean   | false           |
+| qps-delay-lock-key  | Can be set to share the delay lock between multiple QPS keys. Defaults to `qps-key` if not set. (leaving as default recommended) | string    | `qps-key`       |
 
 ### Internal Queues
 
