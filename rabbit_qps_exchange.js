@@ -26,7 +26,7 @@ options:
     process.exit(1)
 }
 
-const MAX_LENGTH = 100000
+const MAX_LENGTH = 10000000
 const QUEUE_PREFIX = 'qps_key'
 
 /**
